@@ -1,18 +1,15 @@
 {
-  "name": "tavern-image-plugin",
-  "version": "0.2.1",
+  "name": "witch-paintbox",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.25.0",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --experimental-vm-modules tests/image-workflow.test.mjs && node tests/openai-image-26.test.mjs && node tests/illustration-selection.test.mjs",
-    "service": "node service/index.mjs",
-    "test:service": "node --test tests/service.test.mjs"
-  },
-  "devDependencies": {
-    "typescript": "~5.8.3"
-  },
-  "dependencies": {
-    "sharp": "^0.35.5"
+    "build": "pnpm -r --if-present run build",
+    "test": "pnpm build && pnpm test:sifang && pnpm test:service && pnpm test:sifang:browser && pnpm test:risu",
+    "service": "node packages/server/index.mjs",
+    "test:sifang": "pnpm --filter @witch-paintbox/plugin-sifang test",
+    "test:service": "pnpm --filter @witch-paintbox/server test",
+    "test:sifang:browser": "pnpm --filter @witch-paintbox/server test:browser",
+    "test:risu": "pnpm --filter @witch-paintbox/plugin-risu test:e2e"
   }
 }

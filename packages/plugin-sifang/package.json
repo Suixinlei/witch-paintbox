@@ -1,0 +1,18 @@
+{
+  "name": "@witch-paintbox/plugin-sifang",
+  "version": "0.2.2",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./manifest.json": "./manifest.json",
+    "./runtime/*": "./dist/*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --experimental-vm-modules tests/image-workflow.test.mjs && node tests/openai-image-26.test.mjs && node tests/illustration-selection.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3",
+    "playwright": "1.64.1"
+  }
+}

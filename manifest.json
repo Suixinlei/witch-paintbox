@@ -1,8 +1,8 @@
 {
   "display_name": "魔女画匣",
   "author": "Elainadesne",
-  "version": "0.2.1",
-  "js": "dist/index.js",
+  "version": "0.2.2",
+  "js": "packages/plugin-sifang/dist/index.js",
   "loading_order": 100,
   "requires": [],
   "optional": []

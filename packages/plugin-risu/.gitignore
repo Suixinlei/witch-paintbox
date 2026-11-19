@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.local/
+*.log
+playwright-report/
+test-results/
+
+# Local configuration, credentials, user data and generated artifacts
+profiles/
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+save/
+backups/
+*.bin
+*.zip
+*.7z
