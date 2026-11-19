@@ -264,7 +264,7 @@ export async function assertSifangSnapshot(snapshot) {
     requireIdle(latest);
     requireIdle(current);
     if (!active || !current || !belongs(saved, active) || !belongs(current, active) || !latest || !belongs(latest, active)
-        || current.node !== saved.node || current.raw !== snapshot.text || lastAssistant?.node !== saved.node
+        || current.node !== saved.node || current.version !== saved.version || current.raw !== snapshot.text || lastAssistant?.node !== saved.node
         || latest.role !== 'assistant' || latest.node !== state.latestNode || line.length !== state.length) {
         throw new Error('聊天或原回复已发生变化，本次结果没有写回。');
     }

@@ -1,6 +1,7 @@
 import { captureLatestAssistant, isChatReadyForImages, readLatestAssistantReply, watchReplyGeneration } from './chat-host.js';
 import { parseImageMarkers } from './image-markers.js';
 import { currentPreferences } from './settings.js';
+import { isSifangEnvironment } from './sifang-host.js';
 const QUIET = 3000;
 const POLL = 500;
 const ATTEMPTS = 3;
@@ -15,6 +16,7 @@ export function autoProcessReplies(processor, signal, skipped) {
     let activity = Date.now();
     let running = false;
     let automatic;
+    let drawing = false;
     let timer;
     const enabled = () => !signal.aborted && currentPreferences().autoProcessReplies;
     function reset() {
@@ -83,11 +85,14 @@ export function autoProcessReplies(processor, signal, skipped) {
             const request = new AbortController();
             automatic = request;
             ++task.attempts;
-            const done = await processor.process(undefined, { snapshot: before, signal: request.signal });
+            const draw = isSifangEnvironment() && currentPreferences().autoGenerateImages;
+            drawing = draw;
+            const done = await processor.process(undefined, { snapshot: before, signal: request.signal, draw });
             automatic = undefined;
             if (pending !== task || !enabled())
                 return;
-            if (done || task.attempts >= ATTEMPTS) {
+            // A combined task may have already submitted paid images when the floor changed.
+            if (done || draw || task.attempts >= ATTEMPTS) {
                 pending = undefined;
                 return;
             }
@@ -107,6 +112,7 @@ export function autoProcessReplies(processor, signal, skipped) {
         }
         finally {
             automatic = undefined;
+            drawing = false;
             running = false;
             arm();
         }
@@ -152,6 +158,8 @@ export function autoProcessReplies(processor, signal, skipped) {
     window.addEventListener('witch-paintbox:preferences-changed', () => {
         if (!enabled())
             reset();
+        else if (drawing && !currentPreferences().autoGenerateImages)
+            automatic?.abort();
         else if (!subscribed)
             subscribe();
     }, { signal });

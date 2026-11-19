@@ -1,6 +1,7 @@
 import { decodeImageBase64 } from './image-bytes.js';
 import { ImageResponseError } from './image-response.js';
 import { readRasterImage } from './raster-image.js';
+import { decodeInBackground } from './background-client.js';
 import { queueImageGeneration, type ImageGenerationProgress } from './image-queue.js';
 import type { ImageConnection } from './novelai.js';
 import type { PetFault } from './pet-events.js';
@@ -98,7 +99,7 @@ export async function withRequest<T>(signal: AbortSignal, timeout: number, opera
   }
 }
 
-function requireSuccess(response: Response): void {
+export function requireSuccess(response: Response): void {
   if (response.ok) return;
   void response.body?.cancel().catch(() => {});
   if (response.status === 401 || response.status === 403) fail('密钥无效、已过期或没有接口权限。', 'auth');
@@ -190,6 +191,12 @@ export async function imageBytes(item: Record<string, unknown>, signal: AbortSig
   return readBytes(response, MAX_IMAGE_BYTES, signal);
 }
 
+export async function decodeOpenAIResponse(response: Response, signal: AbortSignal) {
+  const payload = await readJson(response, MAX_JSON_BYTES, signal);
+  if (!Array.isArray(payload.data) || payload.data.length !== 1) fail('生图接口应返回且仅返回一张图片。');
+  return readRasterImage(await imageBytes(object(payload.data[0]), signal), signal);
+}
+
 /** POST one OpenAI-shaped generations request and decode its single image. */
 export async function postImagesGeneration(
   configured: ImageConnection,
@@ -203,11 +210,8 @@ export async function postImagesGeneration(
       method: 'POST', headers: { Authorization: `Bearer ${configured.key}`, 'Content-Type': 'application/json', Accept: 'application/json' },
       body: json, signal: requestSignal, mode: 'cors', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
     });
-    const payload = await readJson(response, MAX_JSON_BYTES, requestSignal);
-    if (!Array.isArray(payload.data) || payload.data.length !== 1) fail('生图接口应返回且仅返回一张图片。');
-    const bytes = await imageBytes(object(payload.data[0]), requestSignal);
-    const image = await readRasterImage(bytes, requestSignal);
-    return { blob: image.blob, width: image.width, height: image.height };
+    requireSuccess(response);
+    return decodeInBackground('decodeOpenAI', response, requestSignal, decodeOpenAIResponse);
   }), signal, onProgress);
 }
 

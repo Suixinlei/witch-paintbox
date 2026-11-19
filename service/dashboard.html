@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>魔女画匣 · 服务配置</title>
+  <link rel="stylesheet" href="/dashboard.css">
+  <script src="/dashboard.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">魔女画匣 · 独立服务</p>
+        <h1>服务配置</h1>
+        <p>查看当前连接、资料库和本机存储。</p>
+      </div>
+      <span class="badge" id="connection" hidden>已连接</span>
+    </header>
+    <form id="auth" class="panel">
+      <label for="token">服务访问令牌</label>
+      <div class="auth-row">
+        <input id="token" type="password" autocomplete="off" required>
+        <button>查看配置</button>
+      </div>
+    </form>
+    <p role="status" id="error"></p>
+    <section id="summary" aria-label="配置概览" hidden>
+      <div class="facts" id="facts"></div>
+      <div class="grid">
+        <section class="panel"><h2>模型连接</h2><dl id="model"></dl></section>
+        <section class="panel"><h2>生图连接</h2><dl id="image"></dl></section>
+      </div>
+      <section class="panel storage"><h2>本机存储</h2><dl id="storage"></dl></section>
+      <button type="button" class="refresh" id="refresh">刷新状态</button>
+    </section>
+  </main>
+</body>
+</html>

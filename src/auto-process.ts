@@ -3,6 +3,7 @@ import { captureLatestAssistant, isChatReadyForImages, readLatestAssistantReply,
 import type { ChatProcessor } from './chat-processor.js';
 import { parseImageMarkers } from './image-markers.js';
 import { currentPreferences } from './settings.js';
+import { isSifangEnvironment } from './sifang-host.js';
 
 const QUIET = 3000;
 const POLL = 500;
@@ -24,6 +25,7 @@ export function autoProcessReplies(processor: ChatProcessor, signal: AbortSignal
   let activity = Date.now();
   let running = false;
   let automatic: AbortController | undefined;
+  let drawing = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const enabled = () => !signal.aborted && currentPreferences().autoProcessReplies;
 
@@ -70,10 +72,13 @@ export function autoProcessReplies(processor: ChatProcessor, signal: AbortSignal
       const request = new AbortController();
       automatic = request;
       ++task.attempts;
-      const done = await processor.process(undefined, { snapshot: before, signal: request.signal });
+      const draw = isSifangEnvironment() && currentPreferences().autoGenerateImages;
+      drawing = draw;
+      const done = await processor.process(undefined, { snapshot: before, signal: request.signal, draw });
       automatic = undefined;
       if (pending !== task || !enabled()) return;
-      if (done || task.attempts >= ATTEMPTS) { pending = undefined; return; }
+      // A combined task may have already submitted paid images when the floor changed.
+      if (done || draw || task.attempts >= ATTEMPTS) { pending = undefined; return; }
       const after = readLatestAssistantReply();
       // Retry only a changed version of this same reply, or an automatic run interrupted by a helper job.
       if (!after || !task.target.matches(after) || parseImageMarkers(after.text).length
@@ -81,7 +86,7 @@ export function autoProcessReplies(processor: ChatProcessor, signal: AbortSignal
       task.text = after.text;
       activity = Date.now();
     } catch { if (pending === task) pending = undefined; }
-    finally { automatic = undefined; running = false; arm(); }
+    finally { automatic = undefined; drawing = false; running = false; arm(); }
   }
   function receive(event: ReplyActivity) {
     if (signal.aborted) return;
@@ -114,6 +119,7 @@ export function autoProcessReplies(processor: ChatProcessor, signal: AbortSignal
   subscribe(); // Track helper jobs even while disabled, so enabling cannot miss an already observed request.
   window.addEventListener('witch-paintbox:preferences-changed', () => {
     if (!enabled()) reset();
+    else if (drawing && !currentPreferences().autoGenerateImages) automatic?.abort();
     else if (!subscribed) subscribe();
   }, { signal });
   signal.addEventListener('abort', () => { stop(); reset(); helpers.clear(); }, { once: true });

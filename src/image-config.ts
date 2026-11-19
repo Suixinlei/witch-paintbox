@@ -1,3 +1,4 @@
+import { isSifangEnvironment } from './sifang-host.js';
 import { loadImageSettings, saveImageSettings, switchImageProvider, type ImageSettings } from './image-settings.js';
 import { aspectParameters, imageSettingsView, OPENAI_SIZE_PRESETS } from './image-view.js';
 import { NAI_SIZE_PRESETS, validateImageConnection, type ImageConnection } from './novelai.js';
@@ -9,7 +10,7 @@ import { VibePanel } from './vibe-panel.js';
 import { generateConfiguredImage } from './image-provider.js';
 import { imageFileExtension } from './raster-image.js';
 import { imageChatContext } from './chat-host.js';
-import { saveImageHistory, onImageHistoryChanged, type ImageHistoryEntry } from './image-history.js';
+import { saveImageHistory, notifyImageHistorySaved, onImageHistoryChanged, type ImageHistoryEntry } from './image-history.js';
 import { emitPetEvent, petEnd, petFault, petTaskId } from './pet-events.js';
 import { isImageSizeModeSaving, loadModelSettings, saveImageSizeMode } from './model-settings.js';
 import { imageSizeMode } from './image-size-mode.js';
@@ -646,7 +647,10 @@ export class ImageConfig {
     const connection = { ...this.connection };
     const current = () => this.modelRequest === request && !request.signal.aborted && this.settings === settings;
     try {
-      const models = settings.provider === 'gemini' ? await fetchGeminiImageModels(connection, settings.geminiParameters, request.signal)
+      const models = isSifangEnvironment() ? await (await import('./service-client.js')).requestServiceModels('image-models', {
+        provider: settings.provider, connection, geminiParameters: settings.geminiParameters, grokParameters: settings.grokParameters,
+      }, request.signal)
+        : settings.provider === 'gemini' ? await fetchGeminiImageModels(connection, settings.geminiParameters, request.signal)
         : settings.provider === 'grok' && settings.grokParameters.protocol === 'xai' ? await fetchGrokImageModels(connection, request.signal)
           : await fetchOpenAIImageModels(connection, request.signal);
       if (!current()) return;
@@ -705,6 +709,12 @@ export class ImageConfig {
     const petImage = { type: 'end', id: pet, task: 'image', source: 'config' } as const;
     emitPetEvent({ type: 'image', id: pet, source: 'config', phase: 'start', provider: snapshot.provider });
     const source = imageChatContext();
+    const id = newId();
+    const draft = {
+      id, title: '绘图工坊 · 试绘', sourceName: source?.name,
+      markerKey: JSON.stringify([source?.scope ?? 'unassigned', source?.chatId ?? '', 'workshop', id]),
+      scenePrompt: snapshot.positive,
+    };
     try {
       const result = await generateConfiguredImage(snapshot, snapshot.positive, request.signal, progress => {
         if (request.signal.aborted || this.settings?.provider !== snapshot.provider) return;
@@ -713,7 +723,10 @@ export class ImageConfig {
         emitPetEvent({ type: 'image', id: pet, source: 'config', phase: progress.state,
           position: progress.state === 'queued' ? progress.position : undefined, columns: progress.columns });
         this.syncGeneration();
-      });
+      }, '', { history: draft, workshop: {
+        parameters: snapshot.parameters, openaiParameters: snapshot.openaiParameters, geminiParameters: snapshot.geminiParameters,
+        grokParameters: snapshot.grokParameters, negative: snapshot.negative,
+      } });
       if (request.signal.aborted || this.settings?.provider !== snapshot.provider) {
         endPet({ ...petImage, result: 'dropped', paid: true, message: '' });
         return;
@@ -727,16 +740,15 @@ export class ImageConfig {
         blob: result.blob, width: result.parameters.width, height: result.parameters.height,
         target: () => this.container?.querySelector('[data-output] img') ?? null,
       } });
-      const id = newId();
-      const entry: ImageHistoryEntry = {
-        ...result, id, createdAt: Date.now(), title: '绘图工坊 · 试绘', sourceName: source?.name,
-        markerKey: JSON.stringify([source?.scope ?? 'unassigned', source?.chatId ?? '', 'workshop', id]),
-        scenePrompt: snapshot.positive,
-      };
+      const { history: stored, ...image } = result;
+      const entry: ImageHistoryEntry = { ...image, ...draft, createdAt: stored?.createdAt ?? Date.now() };
       this.imageRecord = { id, createdAt: entry.createdAt };
       this.pendingSaves++;
       try {
-        await saveImageHistory(entry);
+        if (isSifangEnvironment()) {
+          if (!stored || stored.error) throw new Error(stored?.error ?? '独立服务未确认保存。');
+          notifyImageHistorySaved(stored.id);
+        } else await saveImageHistory(entry);
         emitPetEvent({ type: 'history', id: pet, saved: true, message: this.generationMessage });
       } catch (error) {
         if (this.settings?.provider === snapshot.provider) this.generationMessage = `图片已生成，但未能保存到回顾：${error instanceof Error ? error.message : '存储不可用'}`;

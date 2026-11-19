@@ -1,9 +1,15 @@
-import { loadAnchors } from './anchor-store.js';
+import { loadAnchors, type CharacterAnchor } from './anchor-store.js';
 import { formatAnchorCatalog } from './anchor-catalog.js';
-import { loadSharedOutfits } from './shared-outfit-store.js';
+import { loadSharedOutfits, type SharedOutfit } from './shared-outfit-store.js';
 import { registerFeatureLayer } from './feature-layers.js';
-import { readWorldbook } from './worldbook-source.js';
+import { readWorldbook, type StoredWorldbook } from './worldbook-source.js';
 import { isWorldbookEntryActive } from './worldbook-activation.js';
+
+export interface BuiltinLibraries {
+  anchors: CharacterAnchor[];
+  sharedOutfits: SharedOutfit[];
+  worldbooks: StoredWorldbook[];
+}
 
 /** Only existing user-authored content is sent; neither provider adds instructions. */
 export function registerBuiltinLayers(): () => void {
@@ -14,7 +20,9 @@ export function registerBuiltinLayers(): () => void {
         const messages: { role: 'system'; content: string }[] = [];
         for (const selected of context.settings?.worldbooks ?? []) {
           if (!selected.entries.length) continue;
-          const entries = await readWorldbook(selected.name, context.signal);
+          const entries = context.libraries
+            ? context.libraries.worldbooks.find(book => book.name === selected.name)?.entries ?? []
+            : await readWorldbook(selected.name, context.signal);
           context.signal?.throwIfAborted();
           if (selected.entries.some(id => !entries.some(entry => entry.id === id))) {
             throw new Error(`世界书“${selected.name}”中有已挂载条目被删除，请重新选择。`);
@@ -30,8 +38,8 @@ export function registerBuiltinLayers(): () => void {
     registerFeatureLayer({
       id: 'anchors', title: '标签锚定',
       async messages(context) {
-        const sharedOutfits = loadSharedOutfits();
-        const anchors = await loadAnchors();
+        const sharedOutfits = context.libraries?.sharedOutfits ?? loadSharedOutfits();
+        const anchors = context.libraries?.anchors ?? await loadAnchors();
         context.signal?.throwIfAborted();
         const content = formatAnchorCatalog(anchors, sharedOutfits);
         return content ? [{ role: 'system', content }] : [];

@@ -2,8 +2,9 @@ import { decodeImageBase64 } from './image-bytes.js';
 import { queueImageGeneration, type ImageGenerationProgress } from './image-queue.js';
 import type { ImageConnection } from './novelai.js';
 import { readRasterImage } from './raster-image.js';
+import { decodeInBackground } from './background-client.js';
 import {
-  fail, imageBytes, MAX_JSON_BYTES, object, postImagesGeneration, readJson, validateOpenAIImageConnection, withRequest,
+  fail, imageBytes, MAX_JSON_BYTES, object, postImagesGeneration, readJson, requireSuccess, validateOpenAIImageConnection, withRequest,
 } from './openai-image.js';
 import { geminiFixedTier, ratioToOpenAISize, validateGeminiImageParameters, type GeminiImageParameters } from './aspect-image.js';
 
@@ -102,6 +103,12 @@ export function geminiImagePayload(payload: Record<string, unknown>): string | R
   return fail(`Gemini 没有返回图片${reason}，可能被安全策略拦截或模型不支持出图。`);
 }
 
+export async function decodeGeminiResponse(response: Response, signal: AbortSignal) {
+  const found = geminiImagePayload(await readJson(response, MAX_JSON_BYTES, signal));
+  const bytes = typeof found === 'string' ? decodeImageBase64(found, signal) : await imageBytes(found, signal);
+  return readRasterImage(bytes, signal);
+}
+
 export async function generateGeminiImage(
   connection: ImageConnection,
   parameters: GeminiImageParameters,
@@ -130,10 +137,8 @@ export async function generateGeminiImage(
     const response = await fetch(url, {
       method: 'POST', headers, body, signal: requestSignal, mode: 'cors', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
     });
-    const payload = await readJson(response, MAX_JSON_BYTES, requestSignal);
-    const found = geminiImagePayload(payload);
-    const bytes = typeof found === 'string' ? await decodeImageBase64(found, requestSignal) : await imageBytes(found, requestSignal);
-    const image = await readRasterImage(bytes, requestSignal);
+    requireSuccess(response);
+    const image = await decodeInBackground('decodeGemini', response, requestSignal, decodeGeminiResponse);
     return { blob: image.blob, parameters: params, width: image.width, height: image.height };
   }), signal, onProgress);
 }

@@ -222,6 +222,25 @@ export async function saveVibe(item) {
     }
     changed();
 }
+export async function replaceVibes(state) {
+    if (getHostStore()) {
+        await hostWrite(async (manifest) => {
+            manifest.items = await Promise.all(state.items.map(toNative));
+            manifest.normalize = state.normalize;
+        });
+    }
+    else {
+        const db = await database();
+        const transaction = db.transaction(['items', 'meta'], 'readwrite');
+        const items = transaction.objectStore('items');
+        items.clear();
+        for (const item of state.items)
+            items.put(item);
+        transaction.objectStore('meta').put(state.normalize, 'normalize');
+        await done(transaction);
+    }
+    changed();
+}
 export async function deleteVibe(id) {
     if (getHostStore()) {
         // Blobs stay behind for in-flight sync readers, same as character portraits.
@@ -402,13 +421,13 @@ export async function encodeVibe(connection, image, model, informationExtracted,
  * Build request fields for the enabled vibes. Missing encodings are fetched once and cached;
  * returns null when nothing is enabled or the model cannot take vibes (V5 is skipped silently).
  */
-export async function prepareVibeReferences(connection, model, signal) {
+export async function prepareVibeReferences(connection, model, signal, supplied) {
     const support = vibeSupport(model);
     if (support === 'unavailable')
         return null;
     let state;
     try {
-        state = await loadVibes();
+        state = supplied?.state ?? await loadVibes();
     }
     catch {
         return null;
@@ -435,11 +454,12 @@ export async function prepareVibeReferences(connection, model, signal) {
                     const have = Object.keys(item.encodings).map(name => LONG_NAMES[name] ?? name).join('、') || '无';
                     fail(`氛围图“${item.name}”没有原图，也没有当前模型与信息提取度 ${ieKey(ie)} 的编码（已有：${have}）。请切换模型或调回原来的信息提取度。`);
                 }
-                encoding = await encodeVibe(connection, item.image, model, ie, signal);
+                encoding = await (supplied?.encode ?? encodeVibe)(connection, item.image, model, ie, signal);
                 result.encoded++;
                 const next = { ...item, encodings: { ...item.encodings, [short]: { ...item.encodings[short], [ieKey(ie)]: encoding } } };
                 try {
-                    await saveVibe(next);
+                    if (!supplied)
+                        await saveVibe(next);
                 }
                 catch { /* The request can still use it; only the cache is lost. */ }
             }

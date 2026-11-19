@@ -363,7 +363,7 @@ async function readImageReference(value, signal, ensureActive) {
     }
     return readResponse(response, MAX_IMAGE_BYTES, signal, ensureActive);
 }
-export async function readImageResponse(response, signal, ensureActive) {
+export async function readImageResponse(response, signal, ensureActive = () => signal.throwIfAborted()) {
     let bytes = await readResponse(response, MAX_ENCODED_BYTES, signal, ensureActive);
     const isZip = bytes[0] === 0x50 && bytes[1] === 0x4b;
     if (isZip)

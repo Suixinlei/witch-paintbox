@@ -14,7 +14,9 @@ export function registerBuiltinLayers() {
                 for (const selected of context.settings?.worldbooks ?? []) {
                     if (!selected.entries.length)
                         continue;
-                    const entries = await readWorldbook(selected.name, context.signal);
+                    const entries = context.libraries
+                        ? context.libraries.worldbooks.find(book => book.name === selected.name)?.entries ?? []
+                        : await readWorldbook(selected.name, context.signal);
                     context.signal?.throwIfAborted();
                     if (selected.entries.some(id => !entries.some(entry => entry.id === id))) {
                         throw new Error(`世界书“${selected.name}”中有已挂载条目被删除，请重新选择。`);
@@ -31,8 +33,8 @@ export function registerBuiltinLayers() {
         registerFeatureLayer({
             id: 'anchors', title: '标签锚定',
             async messages(context) {
-                const sharedOutfits = loadSharedOutfits();
-                const anchors = await loadAnchors();
+                const sharedOutfits = context.libraries?.sharedOutfits ?? loadSharedOutfits();
+                const anchors = context.libraries?.anchors ?? await loadAnchors();
                 context.signal?.throwIfAborted();
                 const content = formatAnchorCatalog(anchors, sharedOutfits);
                 return content ? [{ role: 'system', content }] : [];

@@ -7,6 +7,7 @@ export function bindImageRetention(signal) {
     let running = false;
     let days = currentPreferences().imageRetentionDays;
     let revision = 0;
+    let cleanup;
     const report = (text) => {
         status = text;
         window.dispatchEvent(new Event('witch-paintbox:cleanup-status'));
@@ -20,10 +21,11 @@ export function bindImageRetention(signal) {
         }
         running = true;
         const version = revision;
+        cleanup = new AbortController();
         const before = Date.now() - days * 86_400_000;
         report('正在清理过期图片…');
         try {
-            const count = await deleteExpiredImages(before, () => !signal.aborted && version === revision);
+            const count = await deleteExpiredImages(before, cleanup.signal);
             if (version === revision && !signal.aborted)
                 report(count ? `已清理 ${count} 张过期图片，保留最近 ${days} 天。` : `保留最近 ${days} 天的图片，暂无过期图片。`);
         }
@@ -33,6 +35,7 @@ export function bindImageRetention(signal) {
         }
         finally {
             running = false;
+            cleanup = undefined;
             if (version !== revision)
                 void clean();
         }
@@ -43,11 +46,20 @@ export function bindImageRetention(signal) {
             return;
         days = next;
         revision++;
+        cleanup?.abort();
+        void clean();
+    }, { signal });
+    window.addEventListener('witch-paintbox:service-changed', () => {
+        revision++;
+        cleanup?.abort();
         void clean();
     }, { signal });
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible')
         void clean(); }, { signal });
     const interval = setInterval(() => { void clean(); }, 60 * 60 * 1000);
-    signal.addEventListener('abort', () => clearInterval(interval), { once: true });
+    signal.addEventListener('abort', () => {
+        clearInterval(interval);
+        cleanup?.abort();
+    }, { once: true });
     void clean();
 }

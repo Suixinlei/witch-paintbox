@@ -2,12 +2,12 @@ import { expectedImageSize, generateConfiguredImage, imageSettingsForMarker } fr
 import { loadImageSettings } from './image-settings.js';
 import { imageChatContext } from './chat-host.js';
 import { createImageGallery } from './image-gallery.js';
-import { loadImageHistory, saveImageHistory, deleteImageHistory, historyWasDeleted } from './image-history.js';
+import { loadImageHistory, notifyImageHistorySaved, deleteImageHistory, historyWasDeleted } from './image-history.js';
 import { currentPreferences } from './settings.js';
 import { awaitSifangChatRefresh } from './sifang-chat.js';
 import { emitPetEvent, petEnd, petFault, petTaskId } from './pet-events.js';
 /** The native view is transient. History, gallery and requests keep the plugin's existing storage and queue. */
-export function createSifangImageControl(entry, root, hooks) {
+export function createSifangImageControl(entry, root, hooks, initial) {
     const controller = new AbortController();
     let request = null;
     let phase = 'idle';
@@ -19,7 +19,6 @@ export function createSifangImageControl(entry, root, hooks) {
     let veils = 0;
     let veiled = false;
     const deletedIds = new Set();
-    const saves = new Map();
     const historyKey = entry.historyKey;
     const gallery = createImageGallery(entry.marker.summary, controller.signal, {
         onSelect(id) { selectedId = id; show(); },
@@ -27,7 +26,6 @@ export function createSifangImageControl(entry, root, hooks) {
             const index = history.findIndex(item => item.entry.id === id);
             if (index < 0)
                 return;
-            await saves.get(id)?.catch(() => { });
             if (historyKey)
                 await deleteImageHistory(id);
             if (controller.signal.aborted)
@@ -70,14 +68,14 @@ export function createSifangImageControl(entry, root, hooks) {
         setTimeout(release, 4000);
         return release;
     }
-    const ready = (historyKey ? loadImageHistory(historyKey) : Promise.resolve([])).then(entries => {
+    const ready = (initial ? Promise.resolve(initial.entry ? [initial.entry] : []) : historyKey ? loadImageHistory(historyKey) : Promise.resolve([])).then(entries => {
         if (controller.signal.aborted)
             return;
         historyAvailable = true;
         history = entries.filter(item => item.createdAt >= deletedBefore && !deletedIds.has(item.id))
             .map(item => ({ entry: item, url: URL.createObjectURL(item.blob) }));
         selectedId = history.at(-1)?.entry.id ?? null;
-        report(history.length ? `已恢复 ${history.length} 张图片 · 点击查看历史` : '');
+        report(initial?.error ?? (history.length ? initial ? '已保存图片 · 点击查看历史' : `已恢复 ${history.length} 张图片 · 点击查看历史` : ''));
     }).catch(error => report(error instanceof Error ? error.message : '图片历史读取失败。'));
     async function generate(autoSignal) {
         if (controller.signal.aborted || request || autoSignal?.aborted || !hooks.current())
@@ -106,6 +104,11 @@ export function createSifangImageControl(entry, root, hooks) {
                 job.abort();
                 job.signal.throwIfAborted();
             }
+            const draft = {
+                id: `${Date.now().toString(36)}-${crypto.getRandomValues(new Uint32Array(2)).join('-')}`,
+                markerKey: historyKey ?? entry.key, scenePrompt: entry.marker.prompt,
+                title: entry.marker.summary, sourceName: imageChatContext()?.name,
+            };
             const result = await generateConfiguredImage(settings, entry.marker.prompt, job.signal, progress => {
                 if (!hooks.current() || (progress.state === 'generating' && hooks.pending())) {
                     job.abort();
@@ -120,41 +123,28 @@ export function createSifangImageControl(entry, root, hooks) {
                 emitPetEvent({ type: 'image', id: pet, source, phase: progress.state, floor,
                     position: progress.state === 'queued' ? progress.position : undefined, columns: progress.columns,
                     width: parameters.width, height: parameters.height });
-            }, settings.positive);
+            }, settings.positive, { size: entry.marker.size, history: historyKey ? draft : undefined });
             await awaitSifangChatRefresh();
             if (job.signal.aborted || controller.signal.aborted || !hooks.current()) {
                 endPet({ ...petImage, result: 'dropped', paid: true, message: '' });
                 return;
             }
-            const item = {
-                id: `${Date.now().toString(36)}-${crypto.getRandomValues(new Uint32Array(2)).join('-')}`,
-                ...result, markerKey: historyKey ?? entry.key, createdAt: Date.now(), scenePrompt: entry.marker.prompt,
-                title: entry.marker.summary, sourceName: imageChatContext()?.name,
-            };
-            const save = historyKey ? saveImageHistory(item) : Promise.resolve();
-            saves.set(item.id, save);
+            const { history: stored, ...picture } = result;
+            const item = { ...picture, ...draft, createdAt: stored?.createdAt ?? Date.now() };
             history.push({ entry: item, url: URL.createObjectURL(item.blob) });
             selectedId = item.id;
-            report('绘制完成，正在保存图片历史…');
+            const failure = stored?.error;
+            const message = failure ? `图片已生成，但历史未保存：${failure}`
+                : historyKey ? `已保存 ${history.length} 张图片 · 点击查看历史` : '图片仅保留在当前页面，可下载保存。';
+            report(message);
+            if (stored && !failure)
+                notifyImageHistorySaved(stored.id);
             const place = hooks.watch();
             setTimeout(place.stop, 8000);
             endPet({ ...petImage, result: 'done', message: '', picture: {
                     blob: result.blob, width: result.parameters.width, height: result.parameters.height, target: place.target, veil: () => veil(place.stop),
                 } });
-            try {
-                await save;
-                const saved = historyKey ? `已保存 ${history.length} 张图片 · 点击查看历史` : '图片仅保留在当前页面，可下载保存。';
-                report(saved);
-                emitPetEvent({ type: 'history', id: pet, saved: true, pageOnly: !historyKey, message: saved });
-            }
-            catch (error) {
-                const failed = `图片已生成，但历史未保存：${error instanceof Error ? error.message : '浏览器存储不可用。'}`;
-                report(failed);
-                emitPetEvent({ type: 'history', id: pet, saved: false, message: failed });
-            }
-            finally {
-                saves.delete(item.id);
-            }
+            emitPetEvent({ type: 'history', id: pet, saved: !failure, pageOnly: !historyKey, message });
         }
         catch (error) {
             if (controller.signal.aborted) {

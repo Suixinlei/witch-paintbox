@@ -74,12 +74,17 @@ function parseScene(source, characterLimit) {
     }
     return { positive, characters };
 }
+export async function readPromptLibrary(scene) {
+    const anchors = /[\p{Script=Han}@]/u.test(scene) ? await loadAnchors() : [];
+    return {
+        anchors: anchors.map(anchor => ({ ...anchor, portrait: null })),
+        outfits: scene.includes('#') ? loadSharedOutfits() : [],
+    };
+}
 /** Recognize optional columns, then expand positive fields from one library snapshot. */
-export async function prepareImagePrompt(scene, globalNegative, artistPositive = '', characterLimit = 22) {
+export async function prepareImagePrompt(scene, globalNegative, artistPositive = '', characterLimit = 22, library) {
     const parsed = parseScene(scene, characterLimit);
-    const positives = [parsed.positive, ...parsed.characters.map(character => character.positive)];
-    const anchors = positives.some(prompt => /[\p{Script=Han}@]/u.test(prompt)) ? await loadAnchors() : [];
-    const outfits = positives.some(prompt => prompt.includes('#')) ? loadSharedOutfits() : [];
+    const { anchors, outfits } = library ?? await readPromptLibrary(scene);
     const expand = (positive) => resolveAnchorPromptFields(positive, anchors, outfits);
     const expanded = expand(parsed.positive);
     const mergeNegative = (original, anchored) => anchored

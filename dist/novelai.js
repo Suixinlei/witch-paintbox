@@ -1,3 +1,4 @@
+import { decodeInBackground } from './background-client.js';
 import { ImageResponseError, readImageResponse, requireImageSupport } from './image-response.js';
 import { queueImageGeneration } from './image-queue.js';
 // Official model catalog: https://docs.novelai.net/en/image/models/
@@ -231,7 +232,7 @@ async function requestImage(configured, body, seed, signal) {
                 fail('当前请求过多，请稍后手动重试。', 'busy');
             fail(`生图失败（HTTP ${response.status}），请检查渠道和参数；没有自动重试。`, 'unknown');
         }
-        const blob = await readImageResponse(response, controller.signal, ensureActive);
+        const blob = await decodeInBackground('decodeNovelAI', response, controller.signal, readImageResponse);
         ensureActive();
         return { blob, seed };
     }

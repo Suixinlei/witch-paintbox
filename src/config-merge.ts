@@ -252,6 +252,15 @@ export function mergeArchive(archive: ParsedArchive, local: LocalConfig, modes: 
 export async function applyArchive(archive: ParsedArchive, context: TavernContext, modes: ImportModes): Promise<void> {
   const local = await loadLocalConfig(archive, context);
   const { config, stores } = mergeArchive(archive, local, modes);
+  await persistConfig(config, local, stores, context);
+}
+
+export async function replaceServiceMirror(archive: Extract<ParsedArchive, { kind: 'all' }>, context: TavernContext): Promise<void> {
+  const local = await loadLocalConfig(archive, context);
+  await persistConfig(archive.data, local, ['anchors', 'sharedOutfits', 'worldbooks', 'model', 'image'], context);
+}
+
+async function persistConfig(config: LocalConfig, local: LocalConfig, stores: Store[], context: TavernContext): Promise<void> {
   const writers: Record<Store, (value: LocalConfig) => void | Promise<void>> = {
     anchors: value => replaceAnchors(value.anchors),
     sharedOutfits: value => replaceSharedOutfits(value.sharedOutfits),

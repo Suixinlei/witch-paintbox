@@ -94,6 +94,20 @@ function webpDimensions(bytes: Uint8Array): Dimensions {
 
 async function decodeImage(blob: Blob, expected: Dimensions, signal: AbortSignal): Promise<Dimensions> {
   signal.throwIfAborted();
+  if (typeof Image !== 'function' && typeof createImageBitmap === 'function') {
+    let bitmap: ImageBitmap;
+    try { bitmap = await createImageBitmap(blob); }
+    catch { return fail('图片无法解码：数据可能损坏，或当前浏览器不支持此图片格式。', 'decode'); }
+    try {
+      signal.throwIfAborted();
+      const { width, height } = bitmap;
+      if (!((width === expected.width && height === expected.height)
+        || (width === expected.height && height === expected.width))) {
+        fail('图片无法解码：数据可能损坏，或当前浏览器不支持此图片格式。', 'decode');
+      }
+      return { width, height };
+    } finally { bitmap.close(); }
+  }
   if (typeof Image !== 'function' || typeof URL.createObjectURL !== 'function') {
     fail('当前浏览器不支持图片解码，请升级浏览器或 WebView 后重试。', 'setup');
   }
@@ -156,6 +170,9 @@ export function rasterImageType(bytes: Uint8Array): 'image/png' | 'image/jpeg' |
 }
 
 /** Validate original raster bytes without converting their format or metadata. */
+let serviceDecoder: ((blob: Blob) => Promise<Dimensions>) | undefined;
+export function setServiceRasterDecoder(decode: (blob: Blob) => Promise<Dimensions>): void { serviceDecoder = decode; }
+
 export async function readRasterImage(
   bytes: Uint8Array,
   signal: AbortSignal,
@@ -186,8 +203,10 @@ export async function readRasterImage(
     fail('生图接口未返回可识别的图片；当前支持 PNG、JPEG 和 WebP，请检查接口兼容性。');
   }
   const blob = new Blob([bytes.slice()], { type });
-  const size = await decodeImage(blob, expected, signal);
+  const size = await (serviceDecoder ? serviceDecoder(blob) : decodeImage(blob, expected, signal));
   signal.throwIfAborted();
+  if (!((size.width === expected.width && size.height === expected.height)
+    || (size.width === expected.height && size.height === expected.width))) fail('图片解码尺寸与文件不符。');
   return { blob, ...size };
 }
 

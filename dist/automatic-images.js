@@ -3,7 +3,7 @@ import { currentPreferences } from './settings.js';
 import { emitPetEvent } from './pet-events.js';
 import { isImageSizeModeSaving } from './model-settings.js';
 /** Observe new source markers, never synthetic button clicks or historical DOM remounts. */
-export function automaticImages(handlers) {
+export function automaticImages(handlers, limit = () => currentPreferences().imageConcurrency) {
     const seen = new Set();
     const waiting = new Map();
     const active = new Map();
@@ -36,7 +36,7 @@ export function automaticImages(handlers) {
     // Retries while the host is still busy keep a floor, so a 0-second interval never spins.
     const RETRY_FLOOR = 250;
     function interval() { return currentPreferences().autoImageDelay * 1000; }
-    function full() { return active.size >= currentPreferences().imageConcurrency; }
+    function full() { return active.size >= limit(); }
     function arm(delay = 0) {
         if (disposed || checking || full() || timer !== undefined || !waiting.size)
             return;
@@ -105,7 +105,7 @@ export function automaticImages(handlers) {
     }
     return {
         settled() { waiting.forEach(item => { item.readyAt = Date.now() + interval(); }); },
-        update(candidates, parsingEnabled) {
+        update(candidates, parsingEnabled, handled) {
             if (disposed)
                 return;
             const context = imageChatContext();
@@ -140,7 +140,7 @@ export function automaticImages(handlers) {
                 if (seen.has(candidate.entry.key))
                     continue;
                 seen.add(candidate.entry.key);
-                if (enabled && eligible.has(candidate.entry.key))
+                if (enabled && eligible.has(candidate.entry.key) && !handled?.has(candidate.entry.key))
                     waiting.set(candidate.entry.key, { ...candidate, readyAt: Date.now() + interval() });
             }
             notifyPet();

@@ -6,6 +6,7 @@ import { onImageHistoryChanged } from './image-history.js';
 import { createSifangImageControl, type NativeImageView } from './sifang-image-control.js';
 import { sifangHost, type SifangFloor } from './sifang-host.js';
 import { readSifangFloors, isSifangFloorPending } from './sifang-chat.js';
+import { clearSifangBatch, sifangBatchPicture } from './sifang-batch.js';
 import { nativeTarget, type FloorTarget } from './pet-targets.js';
 
 interface NativeControl {
@@ -49,7 +50,7 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
   const automatic = automaticImages({
     mounted: ({ entry }) => { const item = controls.get(entry.key); return Boolean(item && item.registered && !isSifangFloorPending(item.floor.saveId, item.floor.node) && isCurrent(item)); },
     async generate({ entry }, signal) { await controls.get(entry.key)?.control.generateAutomatically(signal); },
-  });
+  }, () => 1);
 
   async function update(item: NativeControl): Promise<void> {
     if (isSifangFloorPending(item.floor.saveId, item.floor.node) || item.updating || !item.registered || !item.view || signal.aborted) return;
@@ -124,7 +125,7 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
               update(view) { created.view = view; ++created.revision; void update(created); },
               floor: () => created.message.messageId,
               watch: () => watchFrame(created),
-            });
+            }, sifangBatchPicture(message.text, entry.historyKey));
             controls.set(entry.key, created);
             item = created;
           }
@@ -159,7 +160,10 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
           items.forEach(item => { item.registered = true; void update(item); });
         }
         if (ticket === version && !signal.aborted) {
-          automatic.update(candidates, enabled);
+          const handled = new Set(candidates.filter(({ message, entry }) => sifangBatchPicture(message.text, entry.historyKey))
+            .map(({ entry }) => entry.key));
+          automatic.update(candidates, enabled, handled);
+          if (handled.size) clearSifangBatch();
           errorText = '';
         }
       }
@@ -188,6 +192,16 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
     schedule();
   });
   const offHistory = onImageHistoryChanged(change => controls.forEach(item => item.control.removeHistory(change)));
+  window.addEventListener('witch-paintbox:service-changed', () => {
+    clearSifangBatch();
+    for (const item of controls.values()) {
+      item.registered = false;
+      item.control.dispose();
+    }
+    controls.clear();
+    for (const item of registered.values()) item.signature = '';
+    schedule();
+  }, { signal });
   window.addEventListener('witch-paintbox:model-settings-changed', schedule, { signal });
   window.addEventListener('witch-paintbox:preferences-changed', schedule, { signal });
   window.addEventListener('storage', schedule, { signal });

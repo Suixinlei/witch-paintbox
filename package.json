@@ -1,13 +1,18 @@
 {
   "name": "tavern-image-plugin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --experimental-vm-modules tests/image-workflow.test.mjs && node tests/openai-image-26.test.mjs && node tests/illustration-selection.test.mjs"
+    "test": "npm run build && node --experimental-vm-modules tests/image-workflow.test.mjs && node tests/openai-image-26.test.mjs && node tests/illustration-selection.test.mjs",
+    "service": "node service/index.mjs",
+    "test:service": "node --test tests/service.test.mjs"
   },
   "devDependencies": {
     "typescript": "~5.8.3"
+  },
+  "dependencies": {
+    "sharp": "^0.35.5"
   }
 }

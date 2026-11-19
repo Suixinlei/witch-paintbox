@@ -115,6 +115,10 @@ async function readBody(response, signal) {
 }
 /** Only fetches the custom endpoint's model list; never changes the main Tavern connection. */
 export async function fetchModelList(settings, signal) {
+    if (isSifangEnvironment()) {
+        const { requestServiceModels } = await import('./service-client.js');
+        return requestServiceModels('models', settings, signal);
+    }
     const connection = customConnection(settings);
     const headers = requestHeaders();
     return withRequest(signal, 20_000, async (requestSignal) => {
@@ -122,14 +126,27 @@ export async function fetchModelList(settings, signal) {
             method: 'POST', headers, body: JSON.stringify(connection), signal: requestSignal,
             credentials: 'same-origin', redirect: 'error', referrerPolicy: 'no-referrer',
         });
-        const payload = record(parseJson(await readBody(response, requestSignal)));
-        if (!Array.isArray(payload.data))
-            throw new ModelApiError('模型列表格式不受支持，请手动填写模型名称。');
-        const models = [...new Set(payload.data.map(item => record(item).id)
-                .filter((id) => typeof id === 'string' && id.trim().length > 0 && id.length <= 512))];
-        if (models.length > 10_000)
-            throw new ModelApiError('接口返回的模型列表过大，请手动填写模型名称。');
-        return models.sort((a, b) => a.localeCompare(b));
+        return modelList(response, requestSignal);
+    });
+}
+async function modelList(response, signal) {
+    const payload = record(parseJson(await readBody(response, signal)));
+    if (!Array.isArray(payload.data))
+        throw new ModelApiError('模型列表格式不受支持，请手动填写模型名称。');
+    const models = [...new Set(payload.data.map(item => record(item).id)
+            .filter((id) => typeof id === 'string' && id.trim().length > 0 && id.length <= 512))];
+    if (models.length > 10_000)
+        throw new ModelApiError('接口返回的模型列表过大，请手动填写模型名称。');
+    return models.sort((a, b) => a.localeCompare(b));
+}
+export async function fetchServiceModelList(settings, signal) {
+    const { custom_url, custom_include_headers } = customConnection(settings);
+    return withRequest(signal, 20_000, async (requestSignal) => {
+        const headers = JSON.parse(String(custom_include_headers));
+        const response = await fetch(`${custom_url}/models`, {
+            headers, signal: requestSignal, credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
+        });
+        return modelList(response, requestSignal);
     });
 }
 function contentText(value) {
@@ -483,8 +500,30 @@ function tavernHost() {
     }
     return host;
 }
-/** Makes one isolated request using only the caller's messages; no chat history or prompts are added here. */
-export async function requestModel(settings, messages, options = {}) {
+/** Direct OpenAI-compatible connection for the standalone service. */
+export async function requestServiceModel(settings, messages, signal) {
+    validateModelRequest(settings, messages);
+    const model = settings.model.trim();
+    if (!model)
+        throw new ModelApiError('请为独立服务配置模型名称。', 'setup');
+    const { custom_url } = customConnection(settings);
+    const key = settings.key.trim().replace(/^Bearer\s+/i, '');
+    const envelope = settings.transport === 'toolcall' ? buildToolCallEnvelope(messages) : null;
+    return withRequest(signal, 300_000, async (requestSignal) => {
+        const payload = {
+            model, messages: envelope?.messages ?? messages, stream: settings.transport !== 'nonstream',
+            max_tokens: settings.maxTokens, temperature: settings.temperature,
+            ...(envelope ? { tools: envelope.tools, tool_choice: 'required' } : {}),
+        };
+        const send = (body) => fetch(`${custom_url}/chat/completions`, {
+            method: 'POST', signal: requestSignal, credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
+            headers: { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) },
+            body: JSON.stringify(body),
+        });
+        return readModelRequest(send, payload, settings.transport, { signal: requestSignal });
+    });
+}
+function validateModelRequest(settings, messages) {
     if (!Number.isInteger(settings.maxTokens) || settings.maxTokens < 1 || settings.maxTokens > 65536
         || !Number.isFinite(settings.temperature) || settings.temperature < 0 || settings.temperature > 2
         || !['tavern', 'custom'].includes(settings.mode)
@@ -496,6 +535,19 @@ export async function requestModel(settings, messages, options = {}) {
         || !messages.some(message => message.content.trim())) {
         throw new ModelApiError('没有可发送的有效预设或功能层内容。', 'setup');
     }
+}
+async function readModelRequest(send, payload, transport, options) {
+    let response = await send(payload);
+    // Some compatible gateways reject tool_choice "required" with HTTP 400.
+    if (payload.tool_choice === 'required' && response.status === 400) {
+        void response.body?.cancel().catch(() => { });
+        response = await send({ ...payload, tool_choice: 'auto' });
+    }
+    return readCompletion(response, transport, options);
+}
+/** Makes one isolated request using only the caller's messages; no chat history or prompts are added here. */
+export async function requestModel(settings, messages, options = {}) {
+    validateModelRequest(settings, messages);
     const stream = settings.transport !== 'nonstream';
     const toolEnvelope = settings.transport === 'toolcall' ? buildToolCallEnvelope(messages) : null;
     const copiedMessages = toolEnvelope?.messages ?? messages.map(({ role, content }) => ({ role, content }));
@@ -545,12 +597,6 @@ export async function requestModel(settings, messages, options = {}) {
                 redirect: 'error', referrerPolicy: 'no-referrer',
             });
         };
-        let response = await send(payload);
-        // Some compatible gateways reject tool_choice "required" with HTTP 400; retry once with "auto".
-        if (toolEnvelope && response.status === 400) {
-            void response.body?.cancel().catch(() => { });
-            response = await send({ ...payload, tool_choice: 'auto' });
-        }
-        return readCompletion(response, settings.transport, { ...options, signal });
+        return readModelRequest(send, payload, settings.transport, { ...options, signal });
     });
 }

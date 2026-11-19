@@ -5,6 +5,12 @@ import path from 'node:path';
 export async function testOpenAIImage26(page, panel, screenshots) {
   await page.setViewportSize({ width: 1280, height: 900 });
   const pixel = await page.evaluate(() => {
+    const postMessage = Worker.prototype.postMessage;
+    window.paintboxWorkerOperations = [];
+    Worker.prototype.postMessage = function (message, ...options) {
+      postMessage.call(this, message, ...options);
+      if (message.operation) window.paintboxWorkerOperations.push(message.operation);
+    };
     const canvas = document.createElement('canvas'); canvas.width = canvas.height = 64;
     const context = canvas.getContext('2d'); context.fillStyle = '#678ab0'; context.fillRect(0, 0, 64, 64);
     return canvas.toDataURL('image/png').split(',')[1];
@@ -46,7 +52,10 @@ export async function testOpenAIImage26(page, panel, screenshots) {
   assert.equal(await model.inputValue(), 'gpt-image-2.6-sunburst');
   await panel.locator('[data-field="sizePreset"]').selectOption('square');
   await panel.locator('[data-field="positive"]').fill('offline fixture scene');
+  const background = page.waitForEvent('worker', worker => worker.url().endsWith('/dist/background-worker.js'));
   await panel.locator('[data-action="generate"]').click();
+  const worker = await background;
+  assert.equal(await worker.evaluate(() => typeof createImageBitmap), 'function');
   await page.waitForFunction(() => document.querySelector('#tavern-image-plugin').shadowRoot.querySelector('[data-generation-status]').textContent === '生成完成。');
   assert.deepEqual(calls[0], { model: 'gpt-image-2.6-sunburst', prompt: 'offline fixture scene', n: 1,
     size: '1024x1024', quality: 'max', output_format: 'png', complexity: 'medium' });
@@ -73,6 +82,10 @@ export async function testOpenAIImage26(page, panel, screenshots) {
       missingDefault, oldHistory: oldHistory.parameters.complexity, invalidRejected, properties,
       summary: summarizeArchive(parsed).find(row => row.title === 'GPT 生图 API').detail };
   });
+  const operations = await page.evaluate(() => window.paintboxWorkerOperations);
+  assert.ok(operations.includes('decodeOpenAI'));
+  assert.ok(operations.includes('saveHistory'));
+  assert.ok(operations.includes('historyPage'));
   assert.equal(roundTrip.historyComplexity, 'medium'); assert.equal(roundTrip.exportedComplexity, 'medium');
   assert.equal(roundTrip.missingDefault, 'default'); assert.equal(roundTrip.oldHistory, 'default'); assert.equal(roundTrip.invalidRejected, true);
   assert.match(roundTrip.properties, /请求规划深度中 · medium/); assert.match(roundTrip.summary, /规划深度 中 · medium/);

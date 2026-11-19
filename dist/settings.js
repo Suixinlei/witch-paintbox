@@ -1,5 +1,32 @@
 import { isPageId } from './pages.js';
 export const extensionId = 'tavern-image-plugin';
+const preferencesKey = 'witch-paintbox.preferences.v1';
+let preferencesStorage;
+let localPreferences;
+export function bindLocalPreferences(context, signal) {
+    const storage = window.localStorage;
+    const raw = storage.getItem(preferencesKey);
+    if (raw === null && context.extensionSettings[extensionId] !== undefined) {
+        const migrated = validateSettings(context.extensionSettings[extensionId]);
+        storage.setItem(preferencesKey, JSON.stringify(migrated));
+        localPreferences = migrated;
+    }
+    else {
+        localPreferences = raw === null ? defaultSettings() : validateSettings(JSON.parse(raw));
+    }
+    preferencesStorage = storage;
+    window.addEventListener('storage', event => {
+        if (event.storageArea !== storage || (event.key !== preferencesKey && event.key !== null))
+            return;
+        try {
+            localPreferences = event.newValue === null ? defaultSettings() : validateSettings(JSON.parse(event.newValue));
+        }
+        catch {
+            return;
+        }
+        window.dispatchEvent(new Event('witch-paintbox:preferences-changed'));
+    }, { signal });
+}
 export const DEFAULT_EXCLUDED_TAGS = ['think', 'thinking', 'UpdateVariable'];
 export const MAX_EXCLUDED_TAGS = 24;
 /** 标签名：允许写成 <tag>，去掉尖括号与斜杠。思维链标签常带 ~ ! 或中文，只拒绝空白、引号、等号、斜杠与尖括号。 */
@@ -65,8 +92,10 @@ export function readPetPlacement(value) {
     return wide || narrow ? placement : null;
 }
 export function readSettings(context) {
+    return localPreferences ? structuredClone(localPreferences) : validateSettings(context.extensionSettings[extensionId]);
+}
+function validateSettings(raw) {
     const settings = defaultSettings();
-    const raw = context.extensionSettings[extensionId];
     if (!raw || typeof raw !== 'object')
         return settings;
     const saved = raw;
@@ -100,12 +129,18 @@ export function readSettings(context) {
     }
     return settings;
 }
-export function saveSettings(context, settings) {
-    context.extensionSettings[extensionId] = structuredClone(settings);
-    context.saveSettingsDebounced();
+export function saveSettings(_context, settings) {
+    const saved = validateSettings(settings);
+    if (!preferencesStorage)
+        throw new Error('画匣偏好存储尚未初始化。');
+    const serialized = JSON.stringify(saved);
+    if (serialized === JSON.stringify(localPreferences))
+        return;
+    preferencesStorage.setItem(preferencesKey, serialized);
+    localPreferences = saved;
     window.dispatchEvent(new Event('witch-paintbox:preferences-changed'));
 }
-/** 在指定插图窗里改排除标签：直接写回酒馆扩展设置，再广播偏好变化让主面板同步。 */
+/** 保存指定插图窗的排除标签，并通知主面板。 */
 export function saveExcludedTags(tags) {
     const host = globalThis.SillyTavern;
     const next = readExcludedTags([...tags]) ?? [];
@@ -119,5 +154,7 @@ export function saveExcludedTags(tags) {
 }
 export function currentPreferences() {
     const host = globalThis.SillyTavern;
+    if (localPreferences)
+        return structuredClone(localPreferences);
     return host ? readSettings(host.getContext()) : defaultSettings();
 }

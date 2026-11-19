@@ -11,7 +11,7 @@ interface ActiveImage { candidate: AutomaticImage; controller: AbortController }
 export function automaticImages(handlers: {
   mounted(candidate: AutomaticImage): boolean;
   generate(candidate: AutomaticImage, signal: AbortSignal): Promise<void>;
-}) {
+}, limit = () => currentPreferences().imageConcurrency) {
   const seen = new Set<string>();
   const waiting = new Map<string, AutomaticImage & { readyAt: number }>();
   const active = new Map<string, ActiveImage>();
@@ -43,7 +43,7 @@ export function automaticImages(handlers: {
   // Retries while the host is still busy keep a floor, so a 0-second interval never spins.
   const RETRY_FLOOR = 250;
   function interval(): number { return currentPreferences().autoImageDelay * 1000; }
-  function full(): boolean { return active.size >= currentPreferences().imageConcurrency; }
+  function full(): boolean { return active.size >= limit(); }
   function arm(delay = 0) {
     if (disposed || checking || full() || timer !== undefined || !waiting.size) return;
     timer = setTimeout(() => { timer = undefined; void next(); }, Math.max(delay, nextStart - Date.now(), 0));
@@ -93,7 +93,7 @@ export function automaticImages(handlers: {
   }
   return {
     settled() { waiting.forEach(item => { item.readyAt = Date.now() + interval(); }); },
-    update(candidates: AutomaticImage[], parsingEnabled: boolean) {
+    update(candidates: AutomaticImage[], parsingEnabled: boolean, handled?: ReadonlySet<string>) {
       if (disposed) return;
       const context = imageChatContext();
       const settings = currentPreferences();
@@ -124,7 +124,7 @@ export function automaticImages(handlers: {
       for (const candidate of candidates) {
         if (seen.has(candidate.entry.key)) continue;
         seen.add(candidate.entry.key);
-        if (enabled && eligible.has(candidate.entry.key)) waiting.set(candidate.entry.key, { ...candidate, readyAt: Date.now() + interval() });
+        if (enabled && eligible.has(candidate.entry.key) && !handled?.has(candidate.entry.key)) waiting.set(candidate.entry.key, { ...candidate, readyAt: Date.now() + interval() });
       }
       notifyPet();
       arm();

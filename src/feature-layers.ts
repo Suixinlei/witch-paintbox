@@ -1,3 +1,4 @@
+import type { BuiltinLibraries } from './builtin-layers.js';
 import type { ModelMessage } from './model-types.js';
 import type { ModelSettings } from './model-settings.js';
 import { stripImageBlocks } from './context-filter.js';
@@ -9,6 +10,7 @@ export interface FeatureContext {
   /** Original body before temporary insertion-point labels are added. */
   sourceText?: string;
   data?: unknown;
+  libraries?: BuiltinLibraries;
   signal?: AbortSignal;
   settings?: Readonly<ModelSettings>;
 }

@@ -171,7 +171,9 @@ const settingsStorage = createSettingsStorage({
 export function loadAllModelSettings() { return settingsStorage.load(); }
 export function saveAllModelSettings(value) { return settingsStorage.save(validateAllModelSettings(value)); }
 export function loadModelSettings(provider = loadImageSettings().provider) {
-    const value = loadAllModelSettings();
+    return modelSettingsForProvider(loadAllModelSettings(), provider);
+}
+export function modelSettingsForProvider(value, provider) {
     return validateModelSettings({ ...value.api, ...value.presets[provider], presetProvider: provider });
 }
 export function hasSavedModelSettings() { return settingsStorage.hasSaved(); }

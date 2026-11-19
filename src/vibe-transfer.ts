@@ -226,6 +226,24 @@ export async function saveVibe(item: VibeItem): Promise<void> {
   }
   changed();
 }
+export async function replaceVibes(state: VibeState): Promise<void> {
+  if (getHostStore()) {
+    await hostWrite(async manifest => {
+      manifest.items = await Promise.all(state.items.map(toNative));
+      manifest.normalize = state.normalize;
+    });
+  } else {
+    const db = await database();
+    const transaction = db.transaction(['items', 'meta'], 'readwrite');
+    const items = transaction.objectStore('items');
+    items.clear();
+    for (const item of state.items) items.put(item);
+    transaction.objectStore('meta').put(state.normalize, 'normalize');
+    await done(transaction);
+  }
+  changed();
+}
+
 export async function deleteVibe(id: string): Promise<void> {
   if (getHostStore()) {
     // Blobs stay behind for in-flight sync readers, same as character portraits.
@@ -391,11 +409,12 @@ export interface VibeReferences {
  * Build request fields for the enabled vibes. Missing encodings are fetched once and cached;
  * returns null when nothing is enabled or the model cannot take vibes (V5 is skipped silently).
  */
-export async function prepareVibeReferences(connection: ImageConnection, model: string, signal: AbortSignal): Promise<VibeReferences | null> {
+export async function prepareVibeReferences(connection: ImageConnection, model: string, signal: AbortSignal,
+  supplied?: { state: VibeState; encode: typeof encodeVibe }): Promise<VibeReferences | null> {
   const support = vibeSupport(model);
   if (support === 'unavailable') return null;
   let state: VibeState;
-  try { state = await loadVibes(); } catch { return null; }
+  try { state = supplied?.state ?? await loadVibes(); } catch { return null; }
   const enabled = state.items.filter(item => item.enabled);
   if (!enabled.length) return null;
   if (enabled.length > VIBE_LIMIT) fail(`同时启用的氛围参考最多 ${VIBE_LIMIT} 张。`);
@@ -414,10 +433,10 @@ export async function prepareVibeReferences(connection: ImageConnection, model: 
           const have = Object.keys(item.encodings).map(name => LONG_NAMES[name] ?? name).join('、') || '无';
           fail(`氛围图“${item.name}”没有原图，也没有当前模型与信息提取度 ${ieKey(ie)} 的编码（已有：${have}）。请切换模型或调回原来的信息提取度。`);
         }
-        encoding = await encodeVibe(connection, item.image, model, ie, signal);
+        encoding = await (supplied?.encode ?? encodeVibe)(connection, item.image, model, ie, signal);
         result.encoded++;
         const next = { ...item, encodings: { ...item.encodings, [short]: { ...item.encodings[short], [ieKey(ie)]: encoding } } };
-        try { await saveVibe(next); } catch { /* The request can still use it; only the cache is lost. */ }
+        try { if (!supplied) await saveVibe(next); } catch { /* The request can still use it; only the cache is lost. */ }
       }
       result.images.push(encoding);
     }

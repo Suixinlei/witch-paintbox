@@ -1,3 +1,5 @@
+import { bindServiceConfig } from './service-config.js';
+import { bindServiceSettings } from './service-settings.js';
 import { IMAGE_PROVIDERS } from './image-settings.js';
 import { bindLauncher } from './launcher.js';
 import { bindLauncherMenu } from './launcher-menu.js';
@@ -9,7 +11,7 @@ import { ConfigTransfer } from './config-transfer.js';
 import { registerBuiltinLayers } from './builtin-layers.js';
 import { bindContextFilter } from './context-filter.js';
 import { isPageId, pluginName } from './pages.js';
-import { defaultSettings, extensionId, isPaintboxTheme, readAutoImageDelay, readImageConcurrency, readPetScale, readSettings, saveSettings } from './settings.js';
+import { bindLocalPreferences, defaultSettings, extensionId, isPaintboxTheme, readAutoImageDelay, readImageConcurrency, readPetScale, readSettings, saveSettings } from './settings.js';
 import { bindPaintboxTheme } from './paintbox-theme.js';
 import { guideDestination, navigationView, pageView, workflowStatus } from './views.js';
 import { getHostStore, initializeHostStorage } from './host-storage.js';
@@ -32,8 +34,13 @@ async function mount() {
         return;
     await initializeHostStorage();
     await Promise.all([initializeSettingsStorage(), initializeNativeLibraries()]);
-    const unregisterLayers = registerBuiltinLayers();
     const context = SillyTavern.getContext();
+    const controller = new AbortController();
+    const { signal } = controller;
+    bindLocalPreferences(context, signal);
+    if (isSifangEnvironment())
+        bindServiceConfig(context, signal);
+    const unregisterLayers = registerBuiltinLayers();
     let settings = readSettings(context);
     let page = 'guide';
     let connectionPage = 'image-api';
@@ -45,6 +52,10 @@ async function mount() {
     let floating = null;
     let pet = null;
     let changingSyncKeys = false;
+    window.addEventListener('witch-paintbox:service-config-loaded', () => {
+        imageConfig.reloadSaved();
+        modelConfig.reloadSaved();
+    }, { signal });
     const transfer = new ConfigTransfer(context, (kind, provider) => {
         if (kind === 'all' || kind === 'artists')
             imageConfig.reloadSaved(kind === 'artists');
@@ -88,8 +99,7 @@ async function mount() {
             window.dispatchEvent(new Event('witch-paintbox:preferences-changed'));
         }
     }, () => imageConfig.hasPendingWrites || modelConfig.hasPendingWrites || anchorConfig.hasPendingWrites || changingSyncKeys ? '配置仍在保存或角色图仍在生成，请完成后再导入或导出。' : undefined);
-    const controller = new AbortController();
-    const { signal } = controller;
+    let serviceSettings;
     let nativeReady = false;
     let nativeError = '';
     if (isSifangEnvironment()) {
@@ -158,8 +168,7 @@ async function mount() {
     const updateNotice = bindUpdateNotice(root, signal);
     const persist = () => saveSettings(context, settings);
     const refreshTheme = bindPaintboxTheme(host, () => settings.paintboxTheme, signal);
-    // 指定插图窗会直接改排除标签；主面板之后保存其他偏好时不能把它写回旧值
-    window.addEventListener('witch-paintbox:preferences-changed', () => { settings.excludedTags = readSettings(context).excludedTags; }, { signal });
+    window.addEventListener('witch-paintbox:preferences-changed', () => { settings = readSettings(context); }, { signal });
     function syncPetScale() {
         const percent = Math.round(settings.petScale * 100);
         const input = content.querySelector('[name="petScale"]');
@@ -192,6 +201,10 @@ async function mount() {
     let queueState;
     function showQueueStatus() {
         const status = content.querySelector('[data-image-queue-status]');
+        if (status && isSifangEnvironment()) {
+            status.textContent = '任务状态显示在对应画框。';
+            return;
+        }
         if (status && queueState)
             status.textContent = queueState.active || queueState.queued
                 ? `正在生成 ${queueState.active} 张 · 等待 ${queueState.queued} 张 · 同时最多 ${queueState.limit} 张。` : '队列空闲。';
@@ -302,6 +315,8 @@ async function mount() {
         imageReview.unmount();
         anchorConfig.unmount();
         transfer.unmount();
+        serviceSettings?.abort();
+        serviceSettings = undefined;
         page = next;
         if (page === 'features' && nextFeatureTab)
             featureTab = nextFeatureTab;
@@ -339,14 +354,21 @@ async function mount() {
         const transferContainer = content.querySelector('[data-config-transfer]');
         if (page === 'preferences' && transferContainer)
             transfer.mount(transferContainer);
+        const serviceContainer = content.querySelector('[data-paintbox-service]');
+        if (serviceContainer) {
+            serviceSettings = new AbortController();
+            bindServiceSettings(serviceContainer, AbortSignal.any([signal, serviceSettings.signal]));
+        }
         const reviewContainer = content.querySelector('[data-image-review]');
         if (page === 'review' && reviewContainer)
             imageReview.mount(reviewContainer, destination?.reviewScope);
         showCleanupStatus();
         showQueueStatus();
         content.scrollTop = 0;
-        settings.lastPage = page;
-        persist();
+        if (settings.rememberPage && settings.lastPage !== page) {
+            settings.lastPage = page;
+            persist();
+        }
         if (focus)
             content.focus({ preventScroll: true });
         if (destination?.selector)
@@ -559,6 +581,7 @@ async function mount() {
         }, { signal });
     }, { once: true, signal });
     panel.addEventListener('close', () => {
+        serviceSettings?.abort();
         modelConfig.flushWorldbookEdits();
         imageReview.unmount();
         imageConfig.maskKey();

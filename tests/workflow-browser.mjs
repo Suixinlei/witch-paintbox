@@ -28,7 +28,7 @@ const server = createServer(async (req, res) => {
       : 'export const is_group_generating=false;'); return;
   }
   const file = path.resolve(root, `.${pathname}`);
-  if (!file.startsWith(`${root}/`)) { res.writeHead(403).end(); return; }
+  if (!file.startsWith(`${root}${path.sep}`)) { res.writeHead(403).end(); return; }
   try {
     const data = await readFile(file);
     res.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'application/octet-stream');
@@ -53,9 +53,10 @@ try {
     };
     const names = ['GENERATION_STARTED', 'MESSAGE_RECEIVED', 'GENERATION_ENDED', 'GENERATION_STOPPED', 'CHAT_CHANGED', 'MESSAGE_UPDATED', 'MESSAGE_EDITED', 'MESSAGE_DELETED', 'MESSAGE_SENT', 'CHARACTER_MESSAGE_RENDERED'];
     window.testContext = {
-      extensionSettings: {}, chat: [], chatMetadata: {}, characters: [], groups: [],
+      extensionSettings: { 'tavern-image-plugin': { autoImageDelay: 2 } }, chat: [], chatMetadata: {}, characters: [], groups: [],
       eventSource, eventTypes: Object.fromEntries(names.map(name => [name, name])),
-      getRequestHeaders: () => ({}), getCurrentChatId: () => 'test-chat', saveSettingsDebounced() {},
+      getRequestHeaders: () => ({}), getCurrentChatId: () => 'test-chat',
+      preferenceWrites: 0, saveSettingsDebounced() { this.preferenceWrites++; },
     };
     window.SillyTavern = { getContext: () => window.testContext };
     window.$ = ready => ready();
@@ -87,16 +88,19 @@ try {
     assert.equal(await preferenceBranch.locator('[data-page="image-workflow"]').getAttribute('aria-current'), 'page');
     assert.equal(await preferenceBranch.locator(':scope > [data-page="preferences"]').getAttribute('aria-current'), null);
     assert.equal(await panel.locator('[name="imageConcurrency"]').inputValue(), '1');
+    assert.equal(await panel.locator('[name="autoImageDelay"]').inputValue(), '2');
     await panel.locator('[name="autoProcessReplies"]').check();
     await panel.locator('[name="autoGenerateImages"]').check();
     await panel.locator('[name="imageConcurrency"]').selectOption('3');
     await panel.locator('[name="autoImageDelay"]').fill('0.5');
     await panel.locator('[name="autoImageDelay"]').dispatchEvent('change');
     assert.match(await panel.locator('[data-workflow-status]').innerText(), /正文完成 → 模型写 Tag → 自动生成图片/);
-    assert.deepEqual(await page.evaluate(() => {
-      const s = testContext.extensionSettings['tavern-image-plugin'];
-      return [s.autoProcessReplies, s.autoGenerateImages, s.imageConcurrency, s.autoImageDelay];
-    }), [true, true, 3, 0.5]);
+    assert.deepEqual(await page.evaluate(async () => {
+      const { currentPreferences } = await import('/dist/settings.js');
+      const s = currentPreferences();
+      return [s.autoProcessReplies, s.autoGenerateImages, s.imageConcurrency, s.autoImageDelay,
+        testContext.extensionSettings['tavern-image-plugin'].autoImageDelay, testContext.preferenceWrites];
+    }), [true, true, 3, 0.5, 2, 0]);
     // The old preference reset must no longer switch off automatic image settings.
     await page.locator('.sidebar [data-page="preferences"]').click();
     assert.equal(await panel.locator('[name="autoProcessReplies"]').count(), 0);
@@ -148,6 +152,8 @@ try {
     await page.reload();
     await page.getByRole('button', { name: '打开魔女画匣', exact: true }).click();
     await page.locator('.sidebar [data-page="image-workflow"]').click();
+    assert.equal(await panel.locator('[name="imageConcurrency"]').inputValue(), '4');
+    assert.equal(await panel.locator('[name="autoImageDelay"]').inputValue(), '0.5');
     await panel.locator('[name="autoProcessReplies"]').check();
     await panel.locator('[name="autoGenerateImages"]').check();
     await panel.locator('[name="imageConcurrency"]').selectOption('3');

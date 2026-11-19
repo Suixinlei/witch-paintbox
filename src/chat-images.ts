@@ -2,7 +2,7 @@ import { imageChatContext, readAssistantMessages, watchChatRendering, type Image
 import { hasPendingFrontendFrame, iframeNarrativeRoot, locateImageInsertionPoints, locateImageMarkers, primaryNarrativeContainer } from './chat-image-placement.js';
 import type { ImageMarker } from './image-markers.js';
 import { loadImageSettings } from './image-settings.js';
-import { loadModelSettings } from './model-settings.js';
+import { loadAllModelSettings } from './model-settings.js';
 import { expectedImageSize, generateConfiguredImage, imageSettingsForMarker } from './image-provider.js';
 import { createChatImageView } from './chat-image-view.js';
 import { createImageGallery, type GalleryImage } from './image-gallery.js';
@@ -45,6 +45,8 @@ export function bindChatImages(signal: AbortSignal): () => void {
   const warnings = new WeakMap<HTMLElement, { text: string; reason: string }>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
+  let parseImageMarkers = false;
+  let entriesById = new Map<number, { message: AssistantMessage; entries: MarkerEntry[] }>();
   const observedFrames = new Map<HTMLIFrameElement, { doc: Document | null; dispose(): void }>();
   const chatElement = document.getElementById('chat') ?? document.body;
   const layout = watchChatImageLayout(chatElement, schedule);
@@ -99,7 +101,7 @@ export function bindChatImages(signal: AbortSignal): () => void {
 
   function isCurrent(message: AssistantMessage, key: string): boolean {
     try {
-      if (stopped || !loadModelSettings().parseImageMarkers) return false;
+      if (stopped || !parseImageMarkers) return false;
       const current = readAssistantMessages().find(item => sameMessage(item, message));
       return Boolean(current && markerEntries(current).some(entry => entry.key === key));
     } catch { return false; }
@@ -482,23 +484,30 @@ export function bindChatImages(signal: AbortSignal): () => void {
   function render(): void {
     if (stopped) return;
     let messages: ReturnType<typeof readAssistantMessages>;
-    let enabled: boolean;
+    const enabled = parseImageMarkers;
     try {
       messages = readAssistantMessages();
-      enabled = loadModelSettings().parseImageMarkers;
     } catch {
+      entriesById.clear();
       clearImages();
       automatic.update([], false);
       return;
     }
     const byId = new Map(messages.map(message => [message.messageId, message]));
-    const entriesById = new Map<number, ReturnType<typeof markerEntries>>();
+    const previousEntries = entriesById;
+    entriesById = new Map();
     const entriesFor = (message: AssistantMessage) => {
-      let entries = entriesById.get(message.messageId);
-      if (!entries) {
-        try { entries = markerEntries(message); } catch { entries = []; }
-        entriesById.set(message.messageId, entries);
+      const id = message.messageId;
+      const current = entriesById.get(id);
+      if (current) return current.entries;
+      const previous = previousEntries.get(id);
+      let entries: MarkerEntry[] = [];
+      if (previous && sameMessage(previous.message, message) && previous.message.text === message.text) {
+        entries = previous.entries;
+      } else {
+        try { entries = markerEntries(message); } catch { /* Other floors can still render. */ }
       }
+      entriesById.set(id, { message, entries });
       return entries;
     };
     for (const [key, pending] of insertions) {
@@ -595,7 +604,8 @@ export function bindChatImages(signal: AbortSignal): () => void {
       } else warnings.delete(element);
     }
     layout.update(awaitingLayout);
-    automatic.update(messages.flatMap(message => entriesFor(message).map(entry => ({ message, entry }))), enabled);
+    const autoEnabled = currentPreferences().autoGenerateImages;
+    automatic.update(autoEnabled ? messages.flatMap(message => entriesFor(message).map(entry => ({ message, entry }))) : [], enabled);
     cleanPendingContainers();
   }
 
@@ -657,10 +667,15 @@ export function bindChatImages(signal: AbortSignal): () => void {
   for (const element of [document.documentElement, document.body]) {
     themeObserver.observe(element, { attributes: true, attributeFilter: ['class', 'style'] });
   }
-  window.addEventListener('witch-paintbox:model-settings-changed', schedule, { signal });
+  const refreshParsing = () => {
+    try { parseImageMarkers = loadAllModelSettings().api.parseImageMarkers; }
+    catch { parseImageMarkers = false; }
+    schedule();
+  };
+  window.addEventListener('witch-paintbox:model-settings-changed', refreshParsing, { signal });
   window.addEventListener('witch-paintbox:preferences-changed', schedule, { signal });
-  window.addEventListener('storage', schedule, { signal });
-  schedule();
+  window.addEventListener('storage', refreshParsing, { signal });
+  refreshParsing();
   const stop = () => {
     if (stopped) return;
     stopped = true;
@@ -672,6 +687,7 @@ export function bindChatImages(signal: AbortSignal): () => void {
     chatElement.removeEventListener('toggle', schedule, true);
     observedFrames.forEach(watch => watch.dispose());
     observedFrames.clear();
+    entriesById.clear();
     themeObserver.disconnect();
     stopWatching();
     clearImages();

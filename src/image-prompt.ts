@@ -1,6 +1,6 @@
-import { loadAnchors } from './anchor-store.js';
+import { loadAnchors, type CharacterAnchor } from './anchor-store.js';
 import { resolveAnchorPromptFields } from './anchor-resolver.js';
-import { loadSharedOutfits } from './shared-outfit-store.js';
+import { loadSharedOutfits, type SharedOutfit } from './shared-outfit-store.js';
 
 export interface CharacterPrompt {
   positive: string;
@@ -72,12 +72,24 @@ function parseScene(source: string, characterLimit: number): { positive: string;
   return { positive, characters };
 }
 
+export interface PromptLibrary {
+  anchors: CharacterAnchor[];
+  outfits: SharedOutfit[];
+}
+
+export async function readPromptLibrary(scene: string): Promise<PromptLibrary> {
+  const anchors = /[\p{Script=Han}@]/u.test(scene) ? await loadAnchors() : [];
+  return {
+    anchors: anchors.map(anchor => ({ ...anchor, portrait: null })),
+    outfits: scene.includes('#') ? loadSharedOutfits() : [],
+  };
+}
+
 /** Recognize optional columns, then expand positive fields from one library snapshot. */
-export async function prepareImagePrompt(scene: string, globalNegative: string, artistPositive = '', characterLimit = 22): Promise<PreparedImagePrompt> {
+export async function prepareImagePrompt(scene: string, globalNegative: string, artistPositive = '', characterLimit = 22,
+  library?: PromptLibrary): Promise<PreparedImagePrompt> {
   const parsed = parseScene(scene, characterLimit);
-  const positives = [parsed.positive, ...parsed.characters.map(character => character.positive)];
-  const anchors = positives.some(prompt => /[\p{Script=Han}@]/u.test(prompt)) ? await loadAnchors() : [];
-  const outfits = positives.some(prompt => prompt.includes('#')) ? loadSharedOutfits() : [];
+  const { anchors, outfits } = library ?? await readPromptLibrary(scene);
   const expand = (positive: string) => resolveAnchorPromptFields(positive, anchors, outfits);
   const expanded = expand(parsed.positive);
   const mergeNegative = (original: string, anchored: string) => anchored

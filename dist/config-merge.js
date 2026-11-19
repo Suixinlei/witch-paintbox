@@ -265,6 +265,13 @@ export function mergeArchive(archive, local, modes) {
 export async function applyArchive(archive, context, modes) {
     const local = await loadLocalConfig(archive, context);
     const { config, stores } = mergeArchive(archive, local, modes);
+    await persistConfig(config, local, stores, context);
+}
+export async function replaceServiceMirror(archive, context) {
+    const local = await loadLocalConfig(archive, context);
+    await persistConfig(archive.data, local, ['anchors', 'sharedOutfits', 'worldbooks', 'model', 'image'], context);
+}
+async function persistConfig(config, local, stores, context) {
     const writers = {
         anchors: value => replaceAnchors(value.anchors),
         sharedOutfits: value => replaceSharedOutfits(value.sharedOutfits),
