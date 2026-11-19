@@ -22,10 +22,30 @@ interface NativeControl {
   control: ReturnType<typeof createSifangImageControl>;
 }
 
+function bindNativePreviewSize(signal: AbortSignal): void {
+  // The native frame belongs to the same-origin Sifang page, outside the plugin shadow root.
+  let hostDocument: Document;
+  try { hostDocument = window.parent.document; }
+  catch { return; }
+  const style = hostDocument.createElement('style');
+  style.textContent = `
+    figure.image-marker[data-marker] > .body > button.mount {
+      width: fit-content; max-width: 100%; margin-inline: auto;
+    }
+    figure.image-marker[data-marker] > .body > button.mount > img {
+      width: auto; height: auto; max-width: min(100%, 640px);
+      max-height: min(480px, 70vh); max-height: min(480px, 70dvh);
+    }
+  `;
+  hostDocument.head?.append(style);
+  signal.addEventListener('abort', () => style.remove(), { once: true });
+}
+
 /** Render through the host's real paragraph blocks, while keeping the existing plugin image lifecycle. */
 export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
   const host = sifangHost;
   if (!host || signal.aborted) return;
+  bindNativePreviewSize(signal);
   const controls = new Map<string, NativeControl>();
   const registered = new Map<string, { floor: SifangFloor; signature: string }>();
   let version = 0;

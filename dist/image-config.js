@@ -10,6 +10,7 @@ import { generateConfiguredImage } from './image-provider.js';
 import { imageFileExtension } from './raster-image.js';
 import { imageChatContext } from './chat-host.js';
 import { saveImageHistory, notifyImageHistorySaved, onImageHistoryChanged } from './image-history.js';
+import { createImageGallery } from './image-gallery.js';
 import { emitPetEvent, petEnd, petFault, petTaskId } from './pet-events.js';
 import { isImageSizeModeSaving, loadModelSettings, saveImageSizeMode } from './model-settings.js';
 import { imageSizeMode } from './image-size-mode.js';
@@ -52,14 +53,12 @@ export class ImageConfig {
     vibePanel = null;
     imageUrl = '';
     imageRecord = null;
+    previewGallery = null;
     stopImageHistory = onImageHistoryChanged(change => {
         const record = this.imageRecord;
         if (!record || !(change.deletedIds?.includes(record.id) || change.before !== undefined && record.createdAt < change.before))
             return;
-        if (this.imageUrl)
-            URL.revokeObjectURL(this.imageUrl);
-        this.imageUrl = '';
-        this.imageRecord = null;
+        this.releaseOutput();
         if (!this.request)
             this.generationMessage = '本机图片已清理。';
         this.syncGeneration();
@@ -123,6 +122,8 @@ export class ImageConfig {
         this.maskKey();
         this.cancelModelRefresh();
         this.listeners?.abort();
+        this.previewGallery?.element.remove();
+        this.previewGallery = null;
         this.container = null;
     }
     maskKey() {
@@ -140,8 +141,7 @@ export class ImageConfig {
         this.stopImageHistory();
         this.unmount();
         this.request?.abort();
-        if (this.imageUrl)
-            URL.revokeObjectURL(this.imageUrl);
+        this.releaseOutput();
     }
     isConnectionSaved() {
         const profile = this.settings?.connectionProfiles.find(item => item.id === this.connectionId);
@@ -534,6 +534,9 @@ export class ImageConfig {
                 case 'generate':
                     void this.generate();
                     break;
+                case 'preview-output':
+                    this.openPreview();
+                    break;
                 case 'cancel-generation':
                     this.request?.abort();
                     break;
@@ -619,11 +622,16 @@ export class ImageConfig {
         }
         return true;
     }
-    clearOutput() {
+    releaseOutput() {
+        this.previewGallery?.close();
+        this.previewGallery?.setImages([], null);
         if (this.imageUrl)
             URL.revokeObjectURL(this.imageUrl);
         this.imageUrl = '';
         this.imageRecord = null;
+    }
+    clearOutput() {
+        this.releaseOutput();
         this.generationMessage = '';
         this.generationFailed = false;
     }
@@ -828,8 +836,7 @@ export class ImageConfig {
                 return;
             }
             const url = URL.createObjectURL(result.blob);
-            if (this.imageUrl)
-                URL.revokeObjectURL(this.imageUrl);
+            this.releaseOutput();
             this.imageUrl = url;
             this.imageFilename = `witch-paintbox-${result.seed ?? Date.now()}.${imageFileExtension(result.blob)}`;
             this.generationMessage = result.seed === undefined ? '生成完成。' : `生成完成 · 种子 ${result.seed}`;
@@ -839,7 +846,7 @@ export class ImageConfig {
                 } });
             const { history: stored, ...image } = result;
             const entry = { ...image, ...draft, createdAt: stored?.createdAt ?? Date.now() };
-            this.imageRecord = { id, createdAt: entry.createdAt };
+            this.imageRecord = entry;
             this.pendingSaves++;
             try {
                 if (isSifangEnvironment()) {
@@ -878,6 +885,16 @@ export class ImageConfig {
             this.syncGeneration();
         }
     }
+    openPreview() {
+        const entry = this.imageRecord;
+        if (!entry || !this.imageUrl || !this.container || !this.listeners)
+            return;
+        const gallery = this.previewGallery ??= createImageGallery(entry.title ?? '试绘图片', this.listeners.signal, {});
+        if (gallery.element.parentElement !== this.container)
+            this.container.append(gallery.element);
+        gallery.setImages([{ entry, url: this.imageUrl }], entry.id);
+        gallery.open();
+    }
     syncGeneration() {
         if (!this.container || !this.settings)
             return;
@@ -897,11 +914,16 @@ export class ImageConfig {
             const image = document.createElement('img');
             image.src = this.imageUrl;
             image.alt = '本次生成的图片';
+            const preview = document.createElement('button');
+            preview.type = 'button';
+            preview.dataset.action = 'preview-output';
+            preview.setAttribute('aria-label', '全屏查看本次生成的图片');
+            preview.append(image);
             const download = document.createElement('a');
             download.href = this.imageUrl;
             download.download = this.imageFilename;
             download.textContent = '保存图片';
-            output.replaceChildren(image, download);
+            output.replaceChildren(preview, download);
             output.dataset.url = this.imageUrl;
         }
         else if (!this.imageUrl && output.dataset.url) {
