@@ -9,34 +9,11 @@ import { sifangHost } from './sifang-host.js';
 import { readSifangFloors, isSifangFloorPending } from './sifang-chat.js';
 import { clearSifangBatch, sifangBatchPicture } from './sifang-batch.js';
 import { nativeTarget } from './pet-targets.js';
-function bindNativePreviewSize(signal) {
-    // The native frame belongs to the same-origin Sifang page, outside the plugin shadow root.
-    let hostDocument;
-    try {
-        hostDocument = window.parent.document;
-    }
-    catch {
-        return;
-    }
-    const style = hostDocument.createElement('style');
-    style.textContent = `
-    figure.image-marker[data-marker] > .body > button.mount {
-      width: fit-content; max-width: 100%; margin-inline: auto;
-    }
-    figure.image-marker[data-marker] > .body > button.mount > img {
-      width: auto; height: auto; max-width: min(100%, 640px);
-      max-height: min(480px, 70vh); max-height: min(480px, 70dvh);
-    }
-  `;
-    hostDocument.head?.append(style);
-    signal.addEventListener('abort', () => style.remove(), { once: true });
-}
 /** Render through the host's real paragraph blocks, while keeping the existing plugin image lifecycle. */
 export function bindSifangImages(root, signal) {
     const host = sifangHost;
     if (!host || signal.aborted)
         return;
-    bindNativePreviewSize(signal);
     const controls = new Map();
     const registered = new Map();
     let version = 0;

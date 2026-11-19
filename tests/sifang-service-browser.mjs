@@ -159,36 +159,14 @@ try {
   assert.deepEqual(requests, ['/v1/plan']);
 
   await page.getByRole('button', { name: '关闭魔女画匣', exact: true }).click();
-  const portrait = await sharp({ create: { width: 768, height: 1344, channels: 3, background: '#a68656' } }).png().toBuffer();
-  await page.evaluate(image => {
-    const figure = document.createElement('figure');
-    figure.className = 'image-marker';
-    figure.dataset.marker = '';
-    figure.style.width = 'min(100%, 562px)';
-    figure.innerHTML = '<div class="body"><button class="mount" aria-label="查看图片与生成历史"><img alt="庭院"></button></div>';
-    const hostStyle = document.createElement('style');
-    hostStyle.textContent = '.image-marker .mount, .image-marker .mount img { width: 100%; display: block; } .image-marker .mount { padding: 0; border: 0; }';
-    document.head.append(hostStyle);
-    figure.querySelector('img').src = 'data:image/png;base64,' + image;
-    figure.querySelector('button').onclick = () => {
-      const { floor, markers } = fixture;
-      fixture.emit('image-marker', { action: 'open', saveId: floor.saveId, node: floor.node, marker: markers[0], raw: floor.raw });
-    };
-    document.body.append(figure);
-  }, portrait.toString('base64'));
-  const nativePreview = page.getByRole('button', { name: '查看图片与生成历史' });
-  const previewImage = nativePreview.locator('img');
-  await previewImage.evaluate(img => img.decode());
-  assert.ok(Math.abs((await previewImage.boundingBox()).height - 480) < 1);
-  await page.setViewportSize({ width: 844, height: 390 });
-  const compact = await previewImage.boundingBox();
-  assert.ok(Math.abs(compact.height - 273) < 1);
-  assert.ok(Math.abs(compact.width / compact.height - 768 / 1344) < .01);
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await nativePreview.click();
+  await page.evaluate(() => {
+    const { floor, markers } = fixture;
+    fixture.emit('image-marker', { action: 'open', saveId: floor.saveId, node: floor.node, marker: markers[0], raw: floor.raw });
+  });
   const viewer = page.getByRole('dialog', { name: '庭院 · 图片查看器' });
   await viewer.waitFor({ state: 'visible' });
-  assert.ok((await viewer.locator('.wp-gallery-image').boundingBox()).height > 480);
+  await viewer.locator('.wp-gallery-image').evaluate(image => image.decode());
+  assert.equal(await viewer.locator('.wp-gallery-image').evaluate(image => image.naturalWidth), 64);
   await viewer.getByRole('button', { name: '关闭图片查看器' }).click();
   await viewer.waitFor({ state: 'hidden' });
 
@@ -215,7 +193,7 @@ try {
   assert.equal(await stale, false);
   assert.equal(await page.evaluate(() => fixture.writes), 1);
   assert.match(await page.evaluate(() => fixture.status), /已发生变化/);
-  console.log('Sifang browser passed: configuration migration, combined request, responsive preview, full-screen viewer, manual redraw, and stale-floor rejection');
+  console.log('Sifang browser passed: configuration migration, combined request, full-screen viewer, manual redraw, and stale-floor rejection');
 } finally {
   await browser?.close();
   if (child.exitCode === null && child.signalCode === null) {
