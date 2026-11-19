@@ -1,3 +1,4 @@
+import { isServiceEditor } from './service-client.js';
 import { isSifangEnvironment } from './sifang-host.js';
 import { imageProviderName } from './image-settings.js';
 import { listFeatureLayers } from './feature-layers.js';
@@ -159,11 +160,11 @@ export function modelSettingsView(settings, state) {
         <h2 class="section-title" id="model-connection-heading">模型连接</h2><p class="section-description">理解正文，生成场景提示词并插入正文，交给生图 API 绘图。连接与回复参数由各生图通道共用。</p></header>
       <label class="config-field channel-field"><span>连接方式</span>
         <select data-model-field="mode">${options([
-        { value: 'tavern', label: isSifangEnvironment() ? '独立服务默认模型' : '跟随酒馆主 API' },
+        { value: 'tavern', label: (isSifangEnvironment() || isServiceEditor()) ? '独立服务默认模型' : '跟随酒馆主 API' },
         { value: 'custom', label: '自定义接口' },
     ], settings.mode)}</select>
       </label>
-      <p class="config-status" data-model-tavern${settings.mode === 'tavern' ? '' : ' hidden'}>${isSifangEnvironment() ? '使用独立服务启动时配置的模型。' : '使用酒馆当前的聊天补全连接；文字补全接口请改用自定义连接。'}</p>
+      <p class="config-status" data-model-tavern${settings.mode === 'tavern' ? '' : ' hidden'}>${(isSifangEnvironment() || isServiceEditor()) ? '使用独立服务启动时配置的模型。' : '使用酒馆当前的聊天补全连接；文字补全接口请改用自定义连接。'}</p>
       <div class="model-custom-fields" data-model-custom${settings.mode === 'custom' ? '' : ' hidden'}>
         <label class="config-field"><span>服务 URL</span>
           <input type="url" data-model-field="url" value="${escape(settings.url)}" maxlength="8192" placeholder="请输入 URL" autocomplete="off" spellcheck="false">

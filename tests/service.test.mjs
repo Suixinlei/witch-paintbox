@@ -19,6 +19,7 @@ test('standalone service plans once, returns a binary image once and keeps histo
   const jpeg = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#aa5c72' } }).jpeg().toBuffer();
   const calls = [];
   let plansTwo = false;
+  let secondPrompt = 'broken result';
   let activeDraws = 0;
   let peakDraws = 0;
   let onActiveCancelFixture;
@@ -32,7 +33,7 @@ test('standalone service plans once, returns a binary image once and keeps histo
       const input = body.messages.find(message => message.role === 'user').content;
       const points = Array.from(input.matchAll(/【插入点 (P\d+)】/g), match => match[1]);
       const rows = [{ at: points[0], summary: '庭院', prompt: '@角色, moonlit courtyard' }];
-      if (plansTwo) rows.push({ at: points[1] ?? points[0], summary: '坏图', prompt: 'broken result' });
+      if (plansTwo) rows.push({ at: points[1] ?? points[0], summary: '第二张配图', prompt: secondPrompt });
       output = { choices: [{ message: { content: JSON.stringify(rows) } }] };
     } else {
       peakDraws = Math.max(peakDraws, ++activeDraws);
@@ -50,12 +51,13 @@ test('standalone service plans once, returns a binary image once and keeps histo
   const remote = `http://127.0.0.1:${upstream.address().port}/v1`;
   const root = await mkdtemp(join(tmpdir(), 'witch-paintbox-service-'));
   const token = randomBytes(32).toString('hex');
+  const risuToken = randomBytes(32).toString('hex');
   const origin = 'https://fixture.invalid';
   let child;
   let url;
   async function start() {
     child = spawn(process.execPath, ['service/index.mjs'], { env: {
-      ...process.env, PAINTBOX_TOKEN: token, PAINTBOX_HOST: '127.0.0.1', PAINTBOX_PORT: '0', PAINTBOX_ORIGINS: origin,
+      ...process.env, PAINTBOX_TOKEN: token, PAINTBOX_RISU_TOKEN: risuToken, PAINTBOX_HOST: '127.0.0.1', PAINTBOX_PORT: '0', PAINTBOX_ORIGINS: origin,
       PAINTBOX_DATA_DIR: root, PAINTBOX_CONCURRENCY: '4', PAINTBOX_MODEL_URL: remote, PAINTBOX_MODEL_KEY: 'fixture-model-key', PAINTBOX_MODEL_NAME: 'fixture-model',
     }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     const port = await new Promise((resolve, reject) => {
@@ -186,6 +188,28 @@ test('standalone service plans once, returns a binary image once and keeps histo
     assert.equal(peakDraws, 1, 'disconnecting a running draw keeps its slot until the provider finishes');
     assert.equal(calls.length, 12);
 
+    const risu = { Authorization: `Bearer ${risuToken}` };
+    assert.equal((await send('health', undefined, risu)).status, 200);
+    assert.equal((await send('config', undefined, risu)).status, 403);
+    assert.equal((await send('history/delete', { id: 'finished' }, risu)).status, 403);
+    assert.equal((await send('plan', { original, excludedTags: [], draw: { scope: 'scope' } }, risu)).status, 400);
+    const limited = await send('plan', { original, excludedTags: [], maxImages: 1,
+      draw: { scope: 'risu:actor', chatId: 'chat', historyId: 'risu-floor', delay: 0 } }, risu);
+    assert.equal(limited.status, 422);
+    assert.equal(calls.length, 13, 'invalid image count never starts an upstream draw');
+    secondPrompt = 'still lake';
+    const risuBatch = await unpack(await (await send('plan', { original, excludedTags: [], maxImages: 2,
+      draw: { scope: 'risu:actor', chatId: 'chat', historyId: 'risu-floor', delay: 0 } }, risu)).blob());
+    assert.equal(risuBatch.value.pictures.length, 2);
+    assert.equal(risuBatch.blobs.length, 2);
+    assert.equal(peakDraws, 1);
+    const risuImageId = risuBatch.value.pictures[0].entry.id;
+    assert.deepEqual(Buffer.from(await risuBatch.blobs[0].arrayBuffer()), jpeg);
+    const risuImage = await unpack(await (await send('history/image', { id: risuImageId }, risu)).blob());
+    assert.equal(risuImage.value.entries[0].id, risuImageId);
+    const unrelated = await unpack(await (await send('history/image', { id: batch.value.pictures[0].entry.id }, risu)).blob());
+    assert.equal(unrelated.blobs.length, 0);
+
     await stop();
     await start();
     assert.equal((await (await send('health')).json()).revision, revision);
@@ -197,7 +221,7 @@ test('standalone service plans once, returns a binary image once and keeps histo
     assert.ok(page.value.entries.some(entry => entry.id === batch.value.pictures[0].entry.id));
     await send('history/delete', { id: 'finished' });
     assert.deepEqual((await unpack(await (await send('history/marker', { markerKey })).blob())).value.entries, []);
-    assert.equal(calls.length, 12);
+    assert.equal(calls.length, 16);
   } finally {
     await stop();
     await new Promise(resolve => upstream.close(resolve));

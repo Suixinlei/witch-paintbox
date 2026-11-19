@@ -1,10 +1,18 @@
 import { isPageId } from './pages.js';
+import { configurationStorage } from './host-storage.js';
 export const extensionId = 'tavern-image-plugin';
 const preferencesKey = 'witch-paintbox.preferences.v1';
 let preferencesStorage;
 let localPreferences;
+let clientPreferences;
+export function setClientPreferences(preferences) {
+    if (JSON.stringify(clientPreferences) === JSON.stringify(preferences))
+        return;
+    clientPreferences = preferences;
+    window.dispatchEvent(new Event('witch-paintbox:preferences-changed'));
+}
 export function bindLocalPreferences(context, signal) {
-    const storage = window.localStorage;
+    const storage = configurationStorage();
     const raw = storage.getItem(preferencesKey);
     if (raw === null && context.extensionSettings[extensionId] !== undefined) {
         const migrated = validateSettings(context.extensionSettings[extensionId]);
@@ -92,7 +100,7 @@ export function readPetPlacement(value) {
     return wide || narrow ? placement : null;
 }
 export function readSettings(context) {
-    return localPreferences ? structuredClone(localPreferences) : validateSettings(context.extensionSettings[extensionId]);
+    return { ...(localPreferences ? structuredClone(localPreferences) : validateSettings(context.extensionSettings[extensionId])), ...structuredClone(clientPreferences) };
 }
 function validateSettings(raw) {
     const settings = defaultSettings();
@@ -155,6 +163,6 @@ export function saveExcludedTags(tags) {
 export function currentPreferences() {
     const host = globalThis.SillyTavern;
     if (localPreferences)
-        return structuredClone(localPreferences);
+        return { ...structuredClone(localPreferences), ...structuredClone(clientPreferences) };
     return host ? readSettings(host.getContext()) : defaultSettings();
 }

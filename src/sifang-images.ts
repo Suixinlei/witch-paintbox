@@ -1,5 +1,6 @@
 import { imageChatContext, readAssistantMessages, watchChatRendering } from './chat-host.js';
 import { loadModelSettings } from './model-settings.js';
+import { servicePolicy } from './service-runtime.js';
 import { markerEntries, type MarkerEntry, type AssistantImageMessage } from './image-marker-history.js';
 import { automaticImages } from './automatic-images.js';
 import { onImageHistoryChanged } from './image-history.js';
@@ -61,7 +62,7 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
     void host.ui.toast(text, 'fail').catch(() => {});
   };
   function isCurrent(item: NativeControl): boolean {
-    if (signal.aborted || controls.get(item.entry.key) !== item || !loadModelSettings().parseImageMarkers) return false;
+    if (signal.aborted || controls.get(item.entry.key) !== item || !(servicePolicy()?.parseImageMarkers ?? loadModelSettings().parseImageMarkers)) return false;
     if (isSifangFloorPending(item.floor.saveId, item.floor.node)) return true;
     const message = readAssistantMessages().find(message => message.chatId === item.message.chatId
       && message.historyId === item.message.historyId && message.messageId === item.message.messageId);
@@ -120,7 +121,7 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
       while (dirty && !signal.aborted) {
         dirty = false;
         const ticket = version;
-        const enabled = loadModelSettings().parseImageMarkers;
+        const enabled = servicePolicy()?.parseImageMarkers ?? loadModelSettings().parseImageMarkers;
         const messages = enabled ? readAssistantMessages() : [];
         const floors = readSifangFloors();
         const candidates = messages.flatMap(message => markerEntries(message).map(entry => ({ message, entry })));

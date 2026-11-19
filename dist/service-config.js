@@ -4,7 +4,8 @@ import { onAnchorsChanged } from './anchor-store.js';
 import { onSharedOutfitsChanged } from './shared-outfit-store.js';
 import { onWorldbooksChanged } from './worldbook-source.js';
 import { loadVibes, onVibesChanged, replaceVibes } from './vibe-transfer.js';
-import { loadServiceConnection, sendService } from './service-client.js';
+import { isServiceEditor, loadServiceConnection, sendService } from './service-client.js';
+import { configurationStorage } from './host-storage.js';
 import { packet, unpack } from './service-protocol.js';
 const key = 'witch-paintbox.service-config.revision.v2';
 let context;
@@ -20,7 +21,7 @@ function report(message) {
 }
 function mirror(connection) {
     try {
-        const value = JSON.parse(localStorage.getItem(key) ?? 'null');
+        const value = JSON.parse(configurationStorage().getItem(key) ?? 'null');
         return value?.url === connection.url ? value : null;
     }
     catch {
@@ -28,7 +29,7 @@ function mirror(connection) {
     }
 }
 function remember(connection, id, dirty) {
-    localStorage.setItem(key, JSON.stringify({ url: connection.url, revision: id, dirty }));
+    configurationStorage().setItem(key, JSON.stringify({ url: connection.url, revision: id, dirty }));
 }
 function requireContext() {
     if (!context)
@@ -56,6 +57,8 @@ async function upload(connection, expected, signal) {
     }
 }
 export async function flushServiceConfig() {
+    if (!context)
+        return;
     clearTimeout(timer);
     if (running)
         await running;
@@ -167,6 +170,8 @@ export function bindServiceConfig(host, signal) {
     };
     window.addEventListener('witch-paintbox:image-settings-changed', changed, { signal });
     window.addEventListener('witch-paintbox:model-settings-changed', changed, { signal });
+    if (isServiceEditor())
+        window.addEventListener('witch-paintbox:preferences-changed', changed, { signal });
     const subscriptions = [onAnchorsChanged(changed), onSharedOutfitsChanged(changed), onWorldbooksChanged(changed), onVibesChanged(changed)];
     signal.addEventListener('abort', () => { clearTimeout(timer); subscriptions.forEach(stop => stop()); }, { once: true });
     schedule();

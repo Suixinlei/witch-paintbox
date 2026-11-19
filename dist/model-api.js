@@ -1,3 +1,4 @@
+import { isServiceEditor } from './service-client.js';
 import { isSifangEnvironment } from './sifang-host.js';
 class ModelApiError extends Error {
     fault;
@@ -115,7 +116,7 @@ async function readBody(response, signal) {
 }
 /** Only fetches the custom endpoint's model list; never changes the main Tavern connection. */
 export async function fetchModelList(settings, signal) {
-    if (isSifangEnvironment()) {
+    if (isSifangEnvironment() || isServiceEditor()) {
         const { requestServiceModels } = await import('./service-client.js');
         return requestServiceModels('models', settings, signal);
     }

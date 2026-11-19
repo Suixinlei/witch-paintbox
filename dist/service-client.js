@@ -1,6 +1,9 @@
 import { withFault } from './pet-events.js';
 import { packet, unpack, PACKET_TYPE, SERVICE_VERSION, } from './service-protocol.js';
 const storageKey = 'witch-paintbox.standalone-service.v1';
+let editorConnection;
+export function setEditorConnection(connection) { editorConnection = serviceConnection(connection); }
+export function isServiceEditor() { return editorConnection !== undefined; }
 function serviceConnection(value) {
     let url;
     try {
@@ -19,6 +22,8 @@ function serviceConnection(value) {
     return { url: url.href.replace(/\/+$/, ''), token };
 }
 export function loadServiceConnection() {
+    if (editorConnection)
+        return editorConnection;
     try {
         const raw = localStorage.getItem(storageKey);
         return raw ? serviceConnection(JSON.parse(raw)) : null;

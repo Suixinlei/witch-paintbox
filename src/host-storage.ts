@@ -13,6 +13,37 @@ export interface HostStore {
 let store: HostStore | null = null;
 let detected = false;
 const locks = new Map<string, Promise<unknown>>();
+type ConfigStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+let sessionStorage: ConfigStorage | undefined;
+
+export function configurationStorage(): ConfigStorage { return sessionStorage ?? window.localStorage; }
+
+/** The service editor works on temporary data; the service holds the durable archive. */
+export function initializeEditorStorage(): void {
+  const settings = new Map<string, string>();
+  const json = new Map<string, unknown>();
+  const blobs = new Map<string, Blob>();
+  const addressKey = ({ namespace, table, key }: JsonAddress) => JSON.stringify([namespace, table, key]);
+  sessionStorage = {
+    getItem: key => settings.get(key) ?? null,
+    setItem: (key, value) => { settings.set(key, value); },
+    removeItem: key => { settings.delete(key); },
+  };
+  store = {
+    async tryGetJson(address) {
+      const key = addressKey(address);
+      return { found: json.has(key), value: structuredClone(json.get(key)) };
+    },
+    async setJson(address) { json.set(addressKey(address), structuredClone(address.value)); },
+    async getBlob(address) {
+      const blob = blobs.get(addressKey(address));
+      if (!blob) throw new Error('找不到配置中的图片。');
+      return blob;
+    },
+    async setBlob(address) { blobs.set(addressKey(address), address.data); },
+    async deleteBlob(address) { blobs.delete(addressKey(address)); },
+  };
+}
 
 export async function initializeHostStorage(): Promise<void> {
   const host = window as Window & {

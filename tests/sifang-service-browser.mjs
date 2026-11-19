@@ -53,6 +53,39 @@ try {
     });
   });
   browser = await chromium.launch({ executablePath: process.env.WITCH_CHROMIUM });
+  const admin = await browser.newPage({ reducedMotion: 'reduce' });
+  await admin.goto(service);
+  await admin.locator('#token').fill(token);
+  await admin.getByRole('button', { name: '查看配置' }).click();
+  await admin.getByRole('button', { name: '编辑服务配置' }).click();
+  await admin.getByRole('dialog', { name: '服务配置' }).waitFor();
+  await admin.evaluate(async upstream => {
+    const images = await import('/dist/image-settings.js');
+    const image = images.defaultImageSettings('openai');
+    image.connection = { channel: 'custom', url: upstream + '/v1', key: 'fixture-image-key', appendSuffix: true };
+    image.openaiParameters.model = 'fixture-image';
+    await images.saveImageSettings(image);
+    await images.switchImageProvider('openai');
+    const model = await import('/dist/model-settings.js');
+    const settings = model.defaultModelSettings('openai');
+    Object.assign(settings, { mode: 'tavern', transport: 'nonstream', enabledLayers: [],
+      head: [{ id: 'test', name: 'test', role: 'system', enabled: true, content: 'Choose one marked position.' }],
+      promptOrder: ['prompt:test', 'input'] });
+    await model.saveModelSettings(settings);
+  }, origin(upstream));
+
+  await admin.getByRole('button', { name: '使用偏好', exact: true }).click();
+  await admin.getByRole('button', { name: '出图与生图' }).click();
+  await admin.locator('[name="autoProcessReplies"]').check();
+  await admin.locator('[name="autoGenerateImages"]').check();
+  await admin.locator('[name="autoImageDelay"]').fill('0');
+  await admin.locator('[name="autoImageDelay"]').blur();
+  await admin.locator('[data-editor-status]').filter({ hasText: '已保存到服务' }).waitFor();
+  const prefs = await (await fetch(service + '/v1/client/preferences', { headers: { Authorization: 'Bearer ' + token } })).json();
+  assert.equal(prefs.preferences.autoGenerateImages, true);
+  assert.equal(prefs.preferences.autoProcessReplies, true);
+  assert.equal(prefs.preferences.autoImageDelay, 0);
+  assert.equal(await admin.evaluate(() => localStorage.length), 0);
   const page = await browser.newPage({ reducedMotion: 'reduce' });
   page.setDefaultTimeout(10_000);
   const errors = [];
@@ -105,27 +138,11 @@ try {
   await page.getByLabel('访问令牌').fill(token);
   await page.getByRole('button', { name: '测试并保存' }).click();
   await page.locator('[data-service-status]').filter({ hasText: '独立服务已连接' }).waitFor();
-  await page.evaluate(async upstream => {
-    const images = await import('/dist/image-settings.js');
-    const image = images.defaultImageSettings('openai');
-    image.connection = { channel: 'custom', url: upstream + '/v1', key: 'fixture-image-key', appendSuffix: true };
-    image.openaiParameters.model = 'fixture-image';
-    await images.saveImageSettings(image);
-    await images.switchImageProvider('openai');
-    const model = await import('/dist/model-settings.js');
-    const settings = model.defaultModelSettings('openai');
-    Object.assign(settings, { mode: 'tavern', transport: 'nonstream', enabledLayers: [],
-      head: [{ id: 'test', name: 'test', role: 'system', enabled: true, content: 'Choose one marked position.' }],
-      promptOrder: ['prompt:test', 'input'] });
-    await model.saveModelSettings(settings);
-  }, origin(upstream));
-  await page.getByRole('button', { name: '迁移当前配置与资料库' }).click();
-  await page.locator('[data-service-status]').filter({ hasText: '配置与资料库已迁到服务' }).waitFor();
-  await page.evaluate(async () => {
-    const settings = await import('/dist/settings.js');
-    settings.saveSettings(fixture.context, { ...settings.currentPreferences(), autoProcessReplies: true, autoGenerateImages: true, autoImageDelay: 0 });
-    fixture.emit('floor', { floor: fixture.floor.floor, node: fixture.floor.node });
-  });
+  assert.equal(await page.getByRole('button', { name: '接口配置' }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: '插件功能' }).count(), 0);
+  assert.equal(await page.getByRole('link', { name: '打开服务配置页' }).getAttribute('href'), service + '/');
+  await page.evaluate(() => fixture.emit('floor', { floor: fixture.floor.floor, node: fixture.floor.node }));
+
   try {
     await page.waitForFunction(() => fixture.view?.blob instanceof Blob);
   } catch (error) {
@@ -139,7 +156,7 @@ try {
   assert.equal(await page.evaluate(() => fixture.markers.length), 1);
   assert.match(await page.evaluate(() => fixture.view.status), /已保存图片/);
   assert.deepEqual(calls, ['/v1/chat/completions', '/v1/images/generations']);
-  assert.deepEqual(requests, ['/v1/config', '/v1/plan']);
+  assert.deepEqual(requests, ['/v1/plan']);
 
   await page.getByRole('button', { name: '关闭魔女画匣', exact: true }).click();
   const portrait = await sharp({ create: { width: 768, height: 1344, channels: 3, background: '#a68656' } }).png().toBuffer();
@@ -180,7 +197,7 @@ try {
     fixture.emit('image-marker', { action: 'generate', saveId: floor.saveId, node: floor.node, marker: markers[0], raw: floor.raw });
   });
   await page.waitForFunction(() => fixture.view?.status.includes('已保存 2 张'));
-  assert.deepEqual(requests, ['/v1/config', '/v1/plan', '/v1/images']);
+  assert.deepEqual(requests, ['/v1/plan', '/v1/images']);
   assert.deepEqual(calls, ['/v1/chat/completions', '/v1/images/generations', '/v1/images/generations']);
   assert.deepEqual(errors, []);
 

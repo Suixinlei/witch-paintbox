@@ -55,7 +55,7 @@ export class ChatProcessor {
 
   async prepareSelection(): Promise<IllustrationSelection> {
     if (this.busy) throw new Error('请先完成或取消当前 AI 处理。');
-    processingSettings();
+    if (!isSifangEnvironment()) processingSettings();
     const selection = await captureSelection(true);
     if (this.busy) throw new Error('请先完成或取消当前 AI 处理。');
     return selection;
@@ -74,9 +74,9 @@ export class ChatProcessor {
     this.report('正在读取最新回复…', true);
     emitPetEvent({ type: 'process', id: pet, phase: 'reading', cancellable: true });
     try {
-      const settings = processingSettings();
-      controller.signal.throwIfAborted();
       const native = isSifangEnvironment();
+      const settings = native ? undefined : processingSettings();
+      controller.signal.throwIfAborted();
       const prepared = selection ?? (native ? undefined : await captureSelection(false, options.snapshot));
       const snapshot = prepared?.snapshot ?? options.snapshot ?? await captureLatestAssistant();
       if (prepared && prepared.plan.original !== snapshot.text) {
@@ -127,7 +127,7 @@ export class ChatProcessor {
         discardBatch = undefined;
         notifyImageHistorySaved('sifang-batch');
       }
-      const fallbackCount = imageSizeMode(settings) === 'ai' ? result.added.filter(marker => !marker.size).length : 0;
+      const fallbackCount = settings && imageSizeMode(settings) === 'ai' ? result.added.filter(marker => !marker.size).length : 0;
       const sizeNotice = fallbackCount ? `其中 ${fallbackCount} 处未提供有效尺寸，生图时使用设置中的画幅。` : result.warnings.join(' ');
       const pictures = 'pictures' in result && Array.isArray(result.pictures) ? result.pictures : null;
       const failures = pictures?.filter(picture => !picture.entry || picture.error).length ?? 0;

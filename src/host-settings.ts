@@ -1,4 +1,4 @@
-import { getHostStore, readHostJson, withHostLock, writeHostJson } from './host-storage.js';
+import { configurationStorage, getHostStore, readHostJson, withHostLock, writeHostJson } from './host-storage.js';
 
 interface SettingsDescriptor<T> {
   localKey: string;
@@ -71,9 +71,9 @@ export function createSettingsStorage<T>(descriptor: SettingsDescriptor<T>) {
   let initialized = false;
   let exists = false;
 
-  function localRecord(): { storage: Storage; raw: string | null; value: T } {
-    let storage: Storage, raw: string | null;
-    try { storage = window.localStorage; raw = storage.getItem(descriptor.localKey); }
+  function localRecord(): { storage: ReturnType<typeof configurationStorage>; raw: string | null; value: T } {
+    let storage: ReturnType<typeof configurationStorage>, raw: string | null;
+    try { storage = configurationStorage(); raw = storage.getItem(descriptor.localKey); }
     catch { throw new Error(`浏览器无法读取${descriptor.label}，请检查站点存储权限。`); }
     let value: T;
     try { value = raw === null ? descriptor.defaults() : descriptor.validate(JSON.parse(raw)); }

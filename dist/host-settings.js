@@ -1,4 +1,4 @@
-import { getHostStore, readHostJson, withHostLock, writeHostJson } from './host-storage.js';
+import { configurationStorage, getHostStore, readHostJson, withHostLock, writeHostJson } from './host-storage.js';
 const participants = [];
 const writeLock = 'settings';
 let syncApiKeys = false;
@@ -68,7 +68,7 @@ export function createSettingsStorage(descriptor) {
     function localRecord() {
         let storage, raw;
         try {
-            storage = window.localStorage;
+            storage = configurationStorage();
             raw = storage.getItem(descriptor.localKey);
         }
         catch {

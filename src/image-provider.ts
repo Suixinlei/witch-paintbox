@@ -1,3 +1,4 @@
+import { isServiceEditor } from './service-client.js';
 import type { ImageSettings } from './image-settings.js';
 import { prepareImagePrompt, type CharacterPrompt, type PreparedImagePrompt, type PromptLibrary } from './image-prompt.js';
 import { resolveAnchorPromptFields, resolveStoredAnchorPromptFields } from './anchor-resolver.js';
@@ -61,7 +62,7 @@ export async function generatePreparedImage(
   vibesSource?: Parameters<typeof prepareVibeReferences>[3],
 ): Promise<ConfiguredImageResult> {
   signal.throwIfAborted();
-  if (isSifangEnvironment()) {
+  if ((isSifangEnvironment() || isServiceEditor())) {
     const { requestServiceImage } = await import('./service-client.js');
     return requestServiceImage({ input: { prompt } }, signal, onProgress);
   }
@@ -109,7 +110,7 @@ export async function generateConfiguredImage(
   const snapshot = { ...settings, connection: { ...settings.connection },
     parameters: { ...settings.parameters }, openaiParameters: { ...settings.openaiParameters },
     geminiParameters: { ...settings.geminiParameters }, grokParameters: { ...settings.grokParameters } };
-  if (isSifangEnvironment()) {
+  if ((isSifangEnvironment() || isServiceEditor())) {
     const { requestServiceImage } = await import('./service-client.js');
     return requestServiceImage({ input: { scene, size: service?.size, workshop: service?.workshop }, history: service?.history }, signal, onProgress);
   }

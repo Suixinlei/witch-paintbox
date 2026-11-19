@@ -1,3 +1,4 @@
+import { isServiceEditor } from './service-client.js';
 import { isSifangEnvironment } from './sifang-host.js';
 import { loadImageSettings, saveImageSettings, switchImageProvider, type ImageSettings } from './image-settings.js';
 import { aspectParameters, imageSettingsView, OPENAI_SIZE_PRESETS } from './image-view.js';
@@ -656,7 +657,7 @@ export class ImageConfig {
     const connection = { ...this.connection };
     const current = () => this.modelRequest === request && !request.signal.aborted && this.settings === settings;
     try {
-      const models = isSifangEnvironment() ? await (await import('./service-client.js')).requestServiceModels('image-models', {
+      const models = (isSifangEnvironment() || isServiceEditor()) ? await (await import('./service-client.js')).requestServiceModels('image-models', {
         provider: settings.provider, connection, geminiParameters: settings.geminiParameters, grokParameters: settings.grokParameters,
       }, request.signal)
         : settings.provider === 'gemini' ? await fetchGeminiImageModels(connection, settings.geminiParameters, request.signal)
@@ -754,7 +755,7 @@ export class ImageConfig {
       this.imageRecord = entry;
       this.pendingSaves++;
       try {
-        if (isSifangEnvironment()) {
+        if ((isSifangEnvironment() || isServiceEditor())) {
           if (!stored || stored.error) throw new Error(stored?.error ?? '独立服务未确认保存。');
           notifyImageHistorySaved(stored.id);
         } else await saveImageHistory(entry);

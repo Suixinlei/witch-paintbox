@@ -10,6 +10,10 @@ import {
 
 const storageKey = 'witch-paintbox.standalone-service.v1';
 export interface ServiceConnection { url: string; token: string }
+let editorConnection: ServiceConnection | undefined;
+
+export function setEditorConnection(connection: ServiceConnection): void { editorConnection = serviceConnection(connection); }
+export function isServiceEditor(): boolean { return editorConnection !== undefined; }
 
 function serviceConnection(value: ServiceConnection): ServiceConnection {
   let url: URL;
@@ -25,6 +29,7 @@ function serviceConnection(value: ServiceConnection): ServiceConnection {
 }
 
 export function loadServiceConnection(): ServiceConnection | null {
+  if (editorConnection) return editorConnection;
   try {
     const raw = localStorage.getItem(storageKey);
     return raw ? serviceConnection(JSON.parse(raw)) : null;

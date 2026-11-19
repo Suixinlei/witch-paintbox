@@ -51,3 +51,19 @@ auth.addEventListener('submit', event => {
   void refresh();
 });
 document.getElementById('refresh').addEventListener('click', refresh);
+const edit = document.getElementById('edit');
+edit.addEventListener('click', async () => {
+  edit.disabled = true;
+  error.textContent = '';
+  try {
+    const mounted = document.getElementById('tavern-image-plugin');
+    if (mounted) {
+      mounted.shadowRoot.querySelector('dialog').showModal();
+      return;
+    }
+    const { mountServiceEditor } = await import('/dist/index.js');
+    await mountServiceEditor({ url: location.origin, token });
+  } catch (reason) {
+    error.textContent = reason instanceof Error ? reason.message : '无法打开服务配置编辑器。';
+  } finally { edit.disabled = false; }
+});

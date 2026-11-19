@@ -4,7 +4,8 @@ import { onAnchorsChanged } from './anchor-store.js';
 import { onSharedOutfitsChanged } from './shared-outfit-store.js';
 import { onWorldbooksChanged } from './worldbook-source.js';
 import { loadVibes, onVibesChanged, replaceVibes } from './vibe-transfer.js';
-import { loadServiceConnection, sendService, type ServiceConnection } from './service-client.js';
+import { isServiceEditor, loadServiceConnection, sendService, type ServiceConnection } from './service-client.js';
+import { configurationStorage } from './host-storage.js';
 import { packet, unpack, type ServiceConfigManifest } from './service-protocol.js';
 import type { TavernContext } from './settings.js';
 
@@ -26,13 +27,13 @@ function report(message: string): void {
 
 function mirror(connection: ServiceConnection): Synced | null {
   try {
-    const value = JSON.parse(localStorage.getItem(key) ?? 'null') as Synced | null;
+    const value = JSON.parse(configurationStorage().getItem(key) ?? 'null') as Synced | null;
     return value?.url === connection.url ? value : null;
   } catch { return null; }
 }
 
 function remember(connection: ServiceConnection, id: string, dirty: boolean): void {
-  localStorage.setItem(key, JSON.stringify({ url: connection.url, revision: id, dirty }));
+  configurationStorage().setItem(key, JSON.stringify({ url: connection.url, revision: id, dirty }));
 }
 
 function requireContext(): TavernContext {
@@ -62,6 +63,7 @@ async function upload(connection: ServiceConnection, expected: string | null, si
 }
 
 export async function flushServiceConfig(): Promise<void> {
+  if (!context) return;
   clearTimeout(timer);
   if (running) await running;
   if (receiving) throw new Error('正在读取服务配置，请稍后再试。');
@@ -138,6 +140,7 @@ export function bindServiceConfig(host: TavernContext, signal: AbortSignal): voi
   };
   window.addEventListener('witch-paintbox:image-settings-changed', changed, { signal });
   window.addEventListener('witch-paintbox:model-settings-changed', changed, { signal });
+  if (isServiceEditor()) window.addEventListener('witch-paintbox:preferences-changed', changed, { signal });
   const subscriptions = [onAnchorsChanged(changed), onSharedOutfitsChanged(changed), onWorldbooksChanged(changed), onVibesChanged(changed)];
   signal.addEventListener('abort', () => { clearTimeout(timer); subscriptions.forEach(stop => stop()); }, { once: true });
   schedule();

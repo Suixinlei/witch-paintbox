@@ -16,6 +16,8 @@ import { fetchGrokImageModels } from '../dist/grok-image.js';
 import { fetchServiceModelList } from '../dist/model-api.js';
 import { MAX_IMAGE_BYTES } from '../dist/image-bytes.js';
 import { withFault } from '../dist/pet-events.js';
+import { historyScope } from '../dist/image-history-data.js';
+import { defaultSettings } from '../dist/settings.js';
 import { createImageJobs } from './jobs.mjs';
 import { bounds, historyDraft, invalid, readBody, readJson, readPacket, RequestError, sendJson, sendPacket, text } from './request.mjs';
 
@@ -25,6 +27,11 @@ const env = process.env;
 const token = env.PAINTBOX_TOKEN ?? '';
 if (!/^[\x21-\x7e]{24,512}$/.test(token)) throw new Error('请设置至少 24 位的 PAINTBOX_TOKEN。');
 const tokenHash = hash(`Bearer ${token}`);
+const risuToken = env.PAINTBOX_RISU_TOKEN;
+if (risuToken && (!/^[\x21-\x7e]{24,512}$/.test(risuToken) || risuToken === token)) throw new Error('Risu 须使用独立的访问令牌。');
+const risuTokenHash = risuToken ? hash(`Bearer ${risuToken}`) : null;
+const risuScope = scope => typeof scope === 'string' && scope.startsWith('risu:');
+const risuRoutes = new Set(['GET /v1/health', 'POST /v1/plan', 'POST /v1/images', 'POST /v1/history/image']);
 const host = env.PAINTBOX_HOST || '127.0.0.1';
 const port = Number(env.PAINTBOX_PORT || 4783);
 if (!bounds(port, 0, 65535)) throw new Error('服务端口无效。');
@@ -51,7 +58,7 @@ setServiceRasterDecoder(async blob => {
   }
 });
 
-async function route(req, res, signal) {
+async function route(req, res, signal, isRisu) {
   const path = req.url;
   if (req.method === 'GET' && path === '/v1/admin/summary') {
     const current = config.snapshot();
@@ -70,6 +77,16 @@ async function route(req, res, signal) {
     });
   }
   if (req.method === 'GET' && path === '/v1/health') return sendJson(res, { version: SERVICE_VERSION, revision: config.revision() });
+  if (req.method === 'GET' && path === '/v1/client/preferences') {
+    const current = config.snapshot();
+    const saved = current?.preferences ?? defaultSettings();
+    const { autoProcessReplies, autoGenerateImages, autoImageDelay, excludedTags, petLines, petMotion, petScale, paintboxTheme } = saved;
+    return sendJson(res, {
+      preferences: { autoProcessReplies, autoGenerateImages, autoImageDelay, excludedTags, petLines, petMotion, petScale, paintboxTheme },
+      parseImageMarkers: current?.model.api.parseImageMarkers ?? true,
+      hideImageContext: current?.model.api.hideImageContext ?? true,
+    });
+  }
   if (req.method === 'GET' && path === '/v1/config') {
     const body = config.download();
     if (!body) throw new RequestError('独立服务还没有配置。', 404, 'setup');
@@ -77,7 +94,11 @@ async function route(req, res, signal) {
   }
   if (req.method === 'GET' && path === '/v1/history/categories') return sendJson(res, library.categories());
   if (req.method !== 'POST') throw new RequestError('独立服务接口不存在。', 404);
-  if (path === '/v1/plan') return sendPacket(res, await jobs.plan(await readJson(req), signal));
+  if (path === '/v1/plan') {
+    const data = await readJson(req);
+    if (isRisu && data.draw !== undefined && !risuScope(data.draw?.scope)) invalid();
+    return sendPacket(res, await jobs.plan(data, signal));
+  }
   if (path === '/v1/config') {
     const body = await readBody(req, CONFIG_LIMIT, PACKET_TYPE);
     let revision;
@@ -104,8 +125,15 @@ async function route(req, res, signal) {
     return sendJson(res, models);
   }
   if (path === '/v1/images') {
-    const { result, blob, history } = await jobs.draw(await readJson(req), signal);
+    const data = await readJson(req);
+    if (isRisu && !risuScope(historyScope(historyDraft(data.history).markerKey))) invalid();
+    const { result, blob, history } = await jobs.draw(data, signal);
     return sendPacket(res, packet({ ...result, history }, [blob]));
+  }
+  if (path === '/v1/history/image') {
+    const { id } = await readJson(req);
+    if (!text(id, 128) || !id) invalid();
+    return sendPacket(res, await library.image(id, isRisu ? risuScope : () => true));
   }
   if (path === '/v1/history/import') {
     const { value, blobs } = await readPacket(req, 70 * 1024 * 1024);
@@ -151,9 +179,10 @@ const dashboard = new Map(await Promise.all([
 
 const server = createServer(async (req, res) => {
   const origin = req.headers.origin;
+  const sameOrigin = origin === `http://${req.headers.host}`;
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  if (origin) {
+  if (origin && !sameOrigin) {
     res.setHeader('Vary', 'Origin');
     if (origins.size && !origins.has(origin)) return sendJson(res, { error: '四方世界来源未获独立服务授权。' }, 403);
     res.setHeader('Access-Control-Allow-Origin', origins.size ? origin : '*');
@@ -165,14 +194,25 @@ const server = createServer(async (req, res) => {
     res.writeHead(204).end();
     return;
   }
-  const page = req.method === 'GET' && dashboard.get(req.url);
-  if (page && !origin) {
-    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
-    res.writeHead(200, { 'Content-Type': page.type, 'Content-Length': page.data.length }).end(page.data);
-    return;
+  if (req.method === 'GET' && (!origin || sameOrigin)) {
+    const page = dashboard.get(req.url);
+    const asset = /^\/(dist(?:\/pet)?\/[\w-]+\.js|style\.css|pet\/[\w-]+\.webp)$/.exec(req.url)?.[1];
+    if (page || asset) {
+      const type = page?.type ?? (asset.endsWith('.js') ? 'text/javascript; charset=utf-8' : asset.endsWith('.css') ? 'text/css; charset=utf-8' : 'image/webp');
+      const data = page?.data ?? await readFile(new URL(`../${asset}`, import.meta.url)).catch(() => null);
+      if (!data) return sendJson(res, { error: '配置页文件未找到。' }, 404);
+      res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' data:; img-src 'self' blob: data:; worker-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
+      res.writeHead(200, { 'Content-Type': type, 'Content-Length': data.length }).end(data);
+      return;
+    }
   }
-  if (!timingSafeEqual(hash(req.headers.authorization ?? ''), tokenHash)) {
+  const provided = hash(req.headers.authorization ?? '');
+  const isRisu = risuTokenHash !== null && timingSafeEqual(provided, risuTokenHash);
+  if (!isRisu && !timingSafeEqual(provided, tokenHash)) {
     return sendJson(res, { error: '独立服务访问令牌无效。', fault: 'auth' }, 401);
+  }
+  if (isRisu && !risuRoutes.has(`${req.method} ${req.url}`)) {
+    return sendJson(res, { error: 'Risu 令牌仅可提交配图并读取 Risu 图片。', fault: 'auth' }, 403);
   }
 
   const controller = new AbortController();
@@ -180,7 +220,7 @@ const server = createServer(async (req, res) => {
   res.once('close', cancel);
   const limit = setTimeout(() => controller.abort(), req.url === '/v1/plan' ? 7_190_000 : 590_000);
   try {
-    await route(req, res, controller.signal);
+    await route(req, res, controller.signal, isRisu);
   } catch (error) {
     if (res.destroyed || res.headersSent) { res.destroy(); return; }
     if (controller.signal.aborted) sendJson(res, { error: '独立服务任务已超时或取消。', fault: 'timeout' }, 504);
@@ -197,3 +237,10 @@ const server = createServer(async (req, res) => {
   }
 });
 server.listen(port, host, () => console.log(`魔女画匣服务监听 ${host}:${server.address().port}`));
+
+async function cleanExpired() {
+  const days = config.snapshot()?.preferences.imageRetentionDays;
+  if (days) await library.clean(Date.now() - days * 86_400_000);
+}
+const retention = setInterval(() => void cleanExpired().catch(() => console.warn('画匣图片历史清理失败。')), 60 * 60_000);
+retention.unref();

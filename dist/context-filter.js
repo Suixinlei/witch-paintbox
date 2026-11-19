@@ -1,4 +1,5 @@
 import { loadModelSettings } from './model-settings.js';
+import { servicePolicy } from './service-runtime.js';
 // A nested opener ends the candidate, so an unfinished block cannot consume the next scene.
 const imageBlocks = /<img\s*>(?:(?!<\/?img\s*>)[\s\S])*<\/img\s*>/gi;
 const ruleId = '394af125-b39e-4f3b-8798-86cef1b430d7';
@@ -82,12 +83,12 @@ export function bindContextFilter(signal) {
             return;
         let enabled = status.enabled;
         try {
-            enabled = loadModelSettings().hideImageContext;
+            enabled = servicePolicy()?.hideImageContext ?? loadModelSettings().hideImageContext;
             const native = await engine();
             if (signal.aborted)
                 return;
             // Settings may have changed while the native module was loading.
-            enabled = loadModelSettings().hideImageContext;
+            enabled = servicePolicy()?.hideImageContext ?? loadModelSettings().hideImageContext;
             const context = host();
             if (enabled && !context.eventTypes.GENERATION_AFTER_COMMANDS && !context.eventTypes.GENERATION_STARTED) {
                 throw new Error('当前酒馆缺少生成前事件，无法确认图片上下文隐藏会在主 API 请求前生效。');

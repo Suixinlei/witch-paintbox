@@ -2,6 +2,7 @@ import { autoProcessReplies } from './auto-process.js';
 import { ChatProcessor } from './chat-processor.js';
 import { bindIllustrationPicker } from './illustration-picker.js';
 import { emitPetEvent } from './pet-events.js';
+import { isSifangEnvironment } from './sifang-host.js';
 
 // 画匣里的三样东西，手绘棕墨线加一点水彩：画笔（AI生图）、插图卡（指定插图）、调色刀（设置）
 const icons = {
@@ -47,7 +48,7 @@ export function bindLauncherMenu(
     <p class="menu-eyebrow" aria-hidden="true">从画匣里取出……</p>
     ${item('data-process', '让预设 AI 为最新回复插入配图标记', 'AI生图', '为最新回复挑画面', icons.brush, '#E6872A')}
     ${item('data-select', '', '指定插图', '自己圈出要画的段落', icons.card, '#C8A04C')}
-    ${item('data-configure', '', '设置', '接口、锚定与偏好', icons.knife, '#8C6649')}
+    ${item('data-configure', '', isSifangEnvironment() ? '画匣' : '设置', isSifangEnvironment() ? '服务连接与生图回顾' : '接口、锚定与偏好', icons.knife, '#8C6649')}
     <p role="status"></p><button type="button" data-cancel hidden>取消处理</button>`;
   root.append(menu);
   launcher.setAttribute('aria-controls', menu.id);

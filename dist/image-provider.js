@@ -1,3 +1,4 @@
+import { isServiceEditor } from './service-client.js';
 import { prepareImagePrompt } from './image-prompt.js';
 import { resolveAnchorPromptFields, resolveStoredAnchorPromptFields } from './anchor-resolver.js';
 import { generateImage } from './novelai.js';
@@ -35,7 +36,7 @@ export function applyMarkerSize(settings, size, enabled) {
 /** Send already expanded fields without interpreting library text as source-protocol syntax. */
 export async function generatePreparedImage(settings, prompt, signal, onProgress, vibesSource) {
     signal.throwIfAborted();
-    if (isSifangEnvironment()) {
+    if ((isSifangEnvironment() || isServiceEditor())) {
         const { requestServiceImage } = await import('./service-client.js');
         return requestServiceImage({ input: { prompt } }, signal, onProgress);
     }
@@ -79,7 +80,7 @@ export async function generateConfiguredImage(settings, scene, signal, onProgres
     const snapshot = { ...settings, connection: { ...settings.connection },
         parameters: { ...settings.parameters }, openaiParameters: { ...settings.openaiParameters },
         geminiParameters: { ...settings.geminiParameters }, grokParameters: { ...settings.grokParameters } };
-    if (isSifangEnvironment()) {
+    if ((isSifangEnvironment() || isServiceEditor())) {
         const { requestServiceImage } = await import('./service-client.js');
         return requestServiceImage({ input: { scene, size: service?.size, workshop: service?.workshop }, history: service?.history }, signal, onProgress);
     }

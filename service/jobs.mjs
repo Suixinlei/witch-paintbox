@@ -15,7 +15,7 @@ import { normalizeIllustrationItems } from '../dist/illustration-selection.js';
 import { MAX_IMAGE_MARKERS, MAX_ORIGINAL_LENGTH, parseImageMarkers } from '../dist/image-markers.js';
 import { packet } from '../dist/service-protocol.js';
 import { requestServiceModel } from '../dist/model-api.js';
-import { historyDraft, invalid, object, RequestError, text } from './request.mjs';
+import { bounds, historyDraft, invalid, object, RequestError, text } from './request.mjs';
 
 const MAX_PENDING_IMAGES = 12;
 const DRAW_TIMEOUT_MS = 580_000;
@@ -30,13 +30,15 @@ export function createImageJobs({ config, library, defaultModel }) {
   }
 
   async function plan(data, signal) {
-    const { original, excludedTags, items, draw } = data;
+    const { original, excludedTags, items, draw, maxImages } = data;
     if (!text(original, MAX_ORIGINAL_LENGTH) || !Array.isArray(excludedTags) || excludedTags.length > 24
       || !excludedTags.every(tag => text(tag, 40))
-      || items !== undefined && (!Array.isArray(items) || items.length > MAX_IMAGE_MARKERS)) invalid();
+      || items !== undefined && (!Array.isArray(items) || items.length > MAX_IMAGE_MARKERS)
+      || maxImages !== undefined && (items !== undefined || !bounds(maxImages, 1, 6))) invalid();
     if (draw !== undefined && (!object(draw) || !text(draw.scope, 2048) || !text(draw.chatId, 2048)
       || !text(draw.historyId, 2048) || !draw.historyId || !Number.isFinite(draw.delay) || draw.delay < 0 || draw.delay > 60
-      || draw.sourceName !== undefined && !text(draw.sourceName, 2048))) invalid();
+      || draw.sourceName !== undefined && !text(draw.sourceName, 2048)
+      || draw.dynamicSize !== undefined && typeof draw.dynamicSize !== 'boolean')) invalid();
     const snapshot = configured();
     const settings = modelSettingsForProvider(snapshot.model, snapshot.image.activeProvider);
     if (!settings.parseImageMarkers || ![...settings.head, ...settings.tail].some(entry => entry.enabled && !entry.marker && entry.content.trim())) {
@@ -50,13 +52,16 @@ export function createImageJobs({ config, library, defaultModel }) {
     const upstream = settings.mode === 'custom' ? settings
       : { ...settings, url: defaultModel.url, key: defaultModel.key, model: defaultModel.name };
     if (!upstream.url.trim() || !upstream.model.trim()) throw new RequestError('模型连接未配置，请设置独立服务默认模型或使用自定义模型接口。', 400, 'setup');
+    const input = imagePlanningInput(selected, validatedItems);
+    const content = maxImages === undefined ? input : `${input}\n\n本次最多规划 ${maxImages} 张图。没有值得配图的场景时返回空 JSON 数组。`;
     const messages = await buildModelMessages(settings, {
-      messages: [{ role: 'user', content: imagePlanningInput(selected, validatedItems) }],
+      messages: [{ role: 'user', content }],
       sourceText: original, signal, libraries: snapshot,
     });
     const answer = await requestServiceModel(upstream, messages, signal);
     const result = applyImageInsertions(selected, answer, validatedItems);
-    if (!result.added.length) throw new RequestError('AI 未返回配图数据，原文未变。');
+    if (maxImages !== undefined && result.added.length > maxImages) throw new RequestError(`AI 返回的配图超过本次 ${maxImages} 张上限。`, 422);
+    if (!result.added.length && maxImages === undefined) throw new RequestError('AI 未返回配图数据，原文未变。');
     if (!draw) return packet(result);
     return batch(result, draw, snapshot, signal);
   }
@@ -73,7 +78,8 @@ export function createImageJobs({ config, library, defaultModel }) {
       signal.throwIfAborted();
       if (delay) await wait(delay, undefined, { signal });
       try {
-        const { result, blob, history } = await queueDraw({ input: { scene: marker.prompt, size: marker.size },
+        const size = draw.dynamicSize === false ? undefined : marker.size;
+        const { result, blob, history } = await queueDraw({ input: { scene: marker.prompt, size },
           history: { id: randomUUID(), markerKey: historyKey, title: marker.summary, scenePrompt: marker.prompt, sourceName: draw.sourceName },
         }, snapshot, signal);
         const entry = { ...result, id: history.id, markerKey: historyKey, createdAt: history.createdAt,
@@ -109,7 +115,9 @@ export function createImageJobs({ config, library, defaultModel }) {
       prompt = input.prompt;
       if (!object(prompt) || !text(prompt.positive, 1_048_576) || !text(prompt.negative, 1_048_576)
         || !Array.isArray(prompt.characters) || prompt.characters.length > 22
-        || prompt.characters.some(item => !object(item) || !text(item.positive, 1_048_576) || !text(item.negative, 1_048_576))) invalid();
+        || prompt.characters.some(item => !object(item) || !text(item.positive, 1_048_576) || !text(item.negative, 1_048_576))
+        || input.size !== undefined && !parseImageSize(input.size)) invalid();
+      settings = applyMarkerSize(settings, parseImageSize(input.size), true);
     }
     const { blob, ...result } = await generatePreparedImage(settings, prompt, signal, undefined, {
       state: snapshot.vibes, encode: (connection, image, model, amount, job) => library.cachedEncoding(connection, image, model, amount, job, encodeVibe),

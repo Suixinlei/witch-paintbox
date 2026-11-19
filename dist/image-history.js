@@ -1,3 +1,4 @@
+import { isServiceEditor } from './service-client.js';
 import { runInWorker } from './background-client.js';
 import { isSifangEnvironment } from './sifang-host.js';
 export * from './image-history-data.js';
@@ -8,7 +9,7 @@ export function bindImageHistorySync(signal) {
     if (signal.aborted || channel || typeof BroadcastChannel !== 'function')
         return;
     try {
-        channel = new BroadcastChannel(isSifangEnvironment() ? 'witch-paintbox-service-history' : 'witch-paintbox-image-history');
+        channel = new BroadcastChannel((isSifangEnvironment() || isServiceEditor()) ? 'witch-paintbox-service-history' : 'witch-paintbox-image-history');
     }
     catch {
         return;
@@ -50,7 +51,7 @@ function notifyChanged(change, broadcast = true) {
     }
 }
 export async function loadImageHistory(markerKey) {
-    if (isSifangEnvironment())
+    if ((isSifangEnvironment() || isServiceEditor()))
         return (await import('./service-client.js')).readServiceHistory(markerKey);
     return runInWorker('loadHistory', [markerKey], async () => (await import('./image-history-store.js')).loadImageHistory(markerKey));
 }
@@ -62,19 +63,19 @@ export function notifyImageHistorySaved(id) {
     notifyChanged({ savedId: id });
 }
 export async function deleteImageHistory(id) {
-    if (isSifangEnvironment())
+    if ((isSifangEnvironment() || isServiceEditor()))
         await (await import('./service-client.js')).deleteServiceImage(id);
     else
         await runInWorker('deleteHistory', [id], async () => (await import('./image-history-store.js')).deleteImageHistory(id));
     notifyChanged({ deletedIds: [id] });
 }
 export async function loadImageHistoryCategories() {
-    if (isSifangEnvironment())
+    if ((isSifangEnvironment() || isServiceEditor()))
         return (await import('./service-client.js')).readServiceCategories();
     return runInWorker('historyCategories', [], async () => (await import('./image-history-store.js')).loadImageHistoryCategories());
 }
 export async function loadImageHistoryPage(scope, before, limit = 12) {
-    if (isSifangEnvironment())
+    if ((isSifangEnvironment() || isServiceEditor()))
         return (await import('./service-client.js')).readServiceHistoryPage(scope, before, limit);
     return loadLocalImageHistoryPage(scope, before, limit);
 }
@@ -82,7 +83,7 @@ export function loadLocalImageHistoryPage(scope, before, limit = 12) {
     return runInWorker('historyPage', [scope, before, limit], async () => (await import('./image-history-store.js')).loadImageHistoryPage(scope, before, limit));
 }
 export async function deleteExpiredImages(before, signal) {
-    const count = isSifangEnvironment()
+    const count = (isSifangEnvironment() || isServiceEditor())
         ? await (await import('./service-client.js')).cleanServiceImages(before, signal)
         : await runInWorker('deleteExpired', [before], async () => (await import('./image-history-store.js')).deleteExpiredImages(before, () => !signal?.aborted), { signal });
     if (count)

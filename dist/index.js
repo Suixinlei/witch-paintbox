@@ -1,4 +1,6 @@
-import { bindServiceConfig } from './service-config.js';
+import { bindServiceConfig, migrateServiceConfig, pullServiceConfig, serviceConfigStatus } from './service-config.js';
+import { isServiceEditor, sendService, setEditorConnection } from './service-client.js';
+import { bindServiceRuntime } from './service-runtime.js';
 import { bindServiceSettings } from './service-settings.js';
 import { IMAGE_PROVIDERS } from './image-settings.js';
 import { bindLauncher } from './launcher.js';
@@ -14,7 +16,7 @@ import { isPageId, pluginName } from './pages.js';
 import { bindLocalPreferences, defaultSettings, extensionId, isPaintboxTheme, readAutoImageDelay, readImageConcurrency, readPetScale, readSettings, saveSettings } from './settings.js';
 import { bindPaintboxTheme } from './paintbox-theme.js';
 import { guideDestination, navigationView, pageView, workflowStatus } from './views.js';
-import { getHostStore, initializeHostStorage } from './host-storage.js';
+import { getHostStore, initializeEditorStorage, initializeHostStorage } from './host-storage.js';
 import { getSyncApiKeys, initializeSettingsStorage, setSyncApiKeys } from './host-settings.js';
 import { initializeNativeLibraries } from './host-library.js';
 import { bindUpdateNotice, updateNoticeView } from './extension-updates.js';
@@ -29,17 +31,34 @@ import { bindPet } from './pet/index.js';
 import { emitPetEvent } from './pet-events.js';
 import { bindImageQueuePreferences, onImageQueueChanged } from './image-queue.js';
 import { bindPanelViewport } from './panel-viewport.js';
+export async function mountServiceEditor(connection) {
+    setEditorConnection(connection);
+    await mount();
+}
 async function mount() {
     if (document.getElementById(extensionId))
         return;
-    await initializeHostStorage();
+    const editor = isServiceEditor();
+    const client = isSifangEnvironment();
+    if (editor)
+        initializeEditorStorage();
+    else
+        await initializeHostStorage();
     await Promise.all([initializeSettingsStorage(), initializeNativeLibraries()]);
-    const context = SillyTavern.getContext();
+    const context = editor ? { extensionSettings: {} } : SillyTavern.getContext();
     const controller = new AbortController();
     const { signal } = controller;
     bindLocalPreferences(context, signal);
-    if (isSifangEnvironment())
+    if (editor) {
         bindServiceConfig(context, signal);
+        const { revision } = await (await sendService('health', null, signal)).json();
+        if (revision)
+            await pullServiceConfig(signal);
+        else
+            await migrateServiceConfig(signal);
+    }
+    else if (client)
+        await bindServiceRuntime(signal);
     const unregisterLayers = registerBuiltinLayers();
     let settings = readSettings(context);
     let page = 'guide';
@@ -114,9 +133,11 @@ async function mount() {
     }
     bindImageQueuePreferences(signal);
     bindImageHistorySync(signal);
-    bindImageRetention(signal);
+    if (!client && !editor)
+        bindImageRetention(signal);
     signal.addEventListener('abort', unregisterLayers, { once: true });
-    bindContextFilter(signal);
+    if (!editor)
+        bindContextFilter(signal);
     const host = document.createElement('div');
     host.id = extensionId;
     const root = host.attachShadow({ mode: 'open' });
@@ -141,7 +162,8 @@ async function mount() {
       <div class="shell">
         <header class="window-header">
           <div class="window-brand"><p class="eyebrow">魔女的绘图工坊</p>
-            <div class="window-title"><h1 id="image-plugin-title">${pluginName}</h1>${updateNoticeView()}</div>
+            <div class="window-title"><h1 id="image-plugin-title">${editor ? '服务配置' : pluginName}</h1>${editor ? '' : updateNoticeView()}</div>
+            ${editor ? '<p role="status" data-editor-status></p>' : ''}
           </div>
           <div class="header-actions">
             <nav class="api-switch" aria-label="接口类型" hidden>
@@ -165,7 +187,13 @@ async function mount() {
     const sidebar = root.querySelector('.sidebar');
     const content = root.querySelector('.content');
     const apiSwitch = root.querySelector('.api-switch');
-    const updateNotice = bindUpdateNotice(root, signal);
+    const updateNotice = editor ? null : bindUpdateNotice(root, signal);
+    const editorStatus = root.querySelector('[data-editor-status]');
+    if (editorStatus) {
+        const sync = () => { editorStatus.textContent = serviceConfigStatus(); };
+        window.addEventListener('witch-paintbox:service-config-status', sync, { signal });
+        sync();
+    }
     const persist = () => saveSettings(context, settings);
     const refreshTheme = bindPaintboxTheme(host, () => settings.paintboxTheme, signal);
     window.addEventListener('witch-paintbox:preferences-changed', () => { settings = readSettings(context); }, { signal });
@@ -218,7 +246,7 @@ async function mount() {
     }
     window.addEventListener('resize', () => { if (panel.open)
         paintNavigation(); }, { signal });
-    const launcherMenu = bindLauncherMenu(launcher, root, signal, from => openPanel(settings.rememberPage ? settings.lastPage : 'guide', launcher, from), {
+    const launcherMenu = editor ? null : bindLauncherMenu(launcher, root, signal, from => openPanel(settings.rememberPage ? settings.lastPage : 'guide', launcher, from), {
         anchor: () => pet?.anchor() ?? launcher.getBoundingClientRect(),
         box: () => pet?.box() ?? launcher.getBoundingClientRect(),
     });
@@ -226,7 +254,7 @@ async function mount() {
         if (panel.open)
             return;
         panelOpener = opener;
-        launcherMenu.close();
+        launcherMenu?.close();
         navigate(target, false);
         panel.classList.remove('is-opening');
         void panel.offsetWidth;
@@ -237,7 +265,7 @@ async function mount() {
         placeBloomOrigin(from ?? (opener === launcher ? undefined : opener.getBoundingClientRect()));
         paintNavigation();
         emitPetEvent({ type: 'ui', action: 'panel-open' });
-        updateNotice.check();
+        updateNotice?.check();
         content.focus({ preventScroll: true });
     }
     // 开场晕染从点击处开始：菜单里的“设置”、酒馆设置里的入口按钮；都没有时取悬浮球。
@@ -317,7 +345,7 @@ async function mount() {
         transfer.unmount();
         serviceSettings?.abort();
         serviceSettings = undefined;
-        page = next;
+        page = client && next !== 'review' ? 'preferences' : next;
         if (page === 'features' && nextFeatureTab)
             featureTab = nextFeatureTab;
         const isConnection = page === 'image-api' || page === 'model-api';
@@ -326,8 +354,10 @@ async function mount() {
         const previousMark = sidebar.querySelector('.wash-mark');
         const fromTop = previousMark?.dataset.top;
         const fromPaint = panel.style.getPropertyValue('--wash');
-        sidebar.innerHTML = navigationView(page);
-        sidebar.querySelector('[data-page="image-api"]').dataset.page = connectionPage;
+        sidebar.innerHTML = navigationView(page, client);
+        const imageTab = sidebar.querySelector('[data-page="image-api"]');
+        if (imageTab)
+            imageTab.dataset.page = connectionPage;
         paintNavigation(fromTop === undefined ? undefined : Number(fromTop), fromPaint);
         apiSwitch.hidden = !isConnection;
         apiSwitch.querySelectorAll('button').forEach(button => {
@@ -336,7 +366,7 @@ async function mount() {
             else
                 button.removeAttribute('aria-current');
         });
-        content.innerHTML = pageView(page, settings, featureTab);
+        content.innerHTML = pageView(page, settings, featureTab, client);
         content.classList.remove('is-fresh');
         void content.offsetWidth;
         content.classList.add('is-fresh');
@@ -365,7 +395,7 @@ async function mount() {
         showCleanupStatus();
         showQueueStatus();
         content.scrollTop = 0;
-        if (settings.rememberPage && settings.lastPage !== page) {
+        if (!editor && settings.rememberPage && settings.lastPage !== page) {
             settings.lastPage = page;
             persist();
         }
@@ -377,10 +407,15 @@ async function mount() {
     // Wait for the isolated styles before measuring the floating button.
     stylesheet.addEventListener('load', () => {
         host.hidden = false;
-        bindSettingsEntry(button => openPanel(settings.rememberPage ? settings.lastPage : 'guide', button), signal);
+        if (editor) {
+            launcher.hidden = true;
+            openPanel('image-api');
+        }
+        else
+            bindSettingsEntry(button => openPanel(settings.rememberPage ? settings.lastPage : 'guide', button), signal);
         if (nativeReady)
             bindSifangImages(root, signal);
-        else if (!isSifangEnvironment())
+        else if (!client && !editor)
             bindChatImages(signal);
         if (nativeError) {
             const toast = window.toastr;
@@ -389,35 +424,37 @@ async function mount() {
             else
                 console.error(`[${pluginName}] ${nativeError}`);
         }
-        try {
-            pet = bindPet({
-                root, launcher, signal,
-                initial: settings.rememberPosition ? settings.position : null,
-                placement: settings.rememberPosition ? settings.petPlacement : null,
-                preferences: () => ({ lines: settings.petLines, motion: settings.petMotion, scale: settings.petScale, away: settings.petAway }),
-                onMove(position, placement) {
-                    if (!settings.rememberPosition || transfer.isApplying)
-                        return;
-                    settings.position = position;
-                    settings.petPlacement = placement;
-                    persist();
-                },
-                onAway(away) { settings.petAway = away; persist(); },
-                onOpen: launcherMenu.toggle,
-                onDrag: launcherMenu.close,
-            });
+        if (launcherMenu) {
+            try {
+                pet = bindPet({
+                    root, launcher, signal,
+                    initial: settings.rememberPosition ? settings.position : null,
+                    placement: settings.rememberPosition ? settings.petPlacement : null,
+                    preferences: () => ({ lines: settings.petLines, motion: settings.petMotion, scale: settings.petScale, away: settings.petAway }),
+                    onMove(position, placement) {
+                        if (!settings.rememberPosition || transfer.isApplying)
+                            return;
+                        settings.position = position;
+                        settings.petPlacement = placement;
+                        persist();
+                    },
+                    onAway(away) { settings.petAway = away; persist(); },
+                    onOpen: launcherMenu.toggle,
+                    onDrag: launcherMenu.close,
+                });
+            }
+            catch (error) {
+                // (the old floating ball takes over)
+                console.error(`[${pluginName}] 桌宠加载失败，已换回悬浮球。`, error);
+                pet = null;
+            }
+            floating = pet ?? bindLauncher(launcher, settings.rememberPosition ? settings.position : null, position => {
+                if (!settings.rememberPosition || transfer.isApplying)
+                    return;
+                settings.position = position;
+                persist();
+            }, launcherMenu.toggle, signal, launcherMenu.close);
         }
-        catch (error) {
-            // (the old floating ball takes over)
-            console.error(`[${pluginName}] 桌宠加载失败，已换回悬浮球。`, error);
-            pet = null;
-        }
-        floating = pet ?? bindLauncher(launcher, settings.rememberPosition ? settings.position : null, position => {
-            if (!settings.rememberPosition || transfer.isApplying)
-                return;
-            settings.position = position;
-            persist();
-        }, launcherMenu.toggle, signal, launcherMenu.close);
         root.addEventListener('click', event => {
             const target = event.target;
             if (!(target instanceof Element))
@@ -460,7 +497,7 @@ async function mount() {
                 settings = { ...defaults, autoProcessReplies: settings.autoProcessReplies, autoGenerateImages: settings.autoGenerateImages,
                     autoImageDelay: settings.autoImageDelay, imageConcurrency: settings.imageConcurrency, imageRetentionDays: settings.imageRetentionDays,
                     excludedTags: settings.excludedTags };
-                floating.reset();
+                floating?.reset();
                 persist();
                 refreshTheme();
                 navigate('preferences', false);
@@ -619,14 +656,15 @@ async function mount() {
     host.hidden = true;
     document.body.append(host);
 }
-$(() => {
-    void mount().catch(() => {
-        const message = '魔女画匣未能读取或迁移配置，原有记录已保留。请检查 TT 扩展数据或浏览器存储后重新打开。';
-        console.error(message);
-        const toast = window.toastr;
-        if (toast)
-            toast.error(message);
-        else
-            window.alert(message);
+if (typeof $ === 'function')
+    $(() => {
+        void mount().catch(() => {
+            const message = '魔女画匣未能读取或迁移配置，原有记录已保留。请检查 TT 扩展数据或浏览器存储后重新打开。';
+            console.error(message);
+            const toast = window.toastr;
+            if (toast)
+                toast.error(message);
+            else
+                window.alert(message);
+        });
     });
-});

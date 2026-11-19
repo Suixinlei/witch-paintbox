@@ -1,3 +1,4 @@
+import { isServiceEditor } from './service-client.js';
 import { isSifangEnvironment } from './sifang-host.js';
 import { serviceSettingsView } from './service-settings.js';
 import { navigation, pages, pluginName, type PageId, type NavigationItem } from './pages.js';
@@ -37,8 +38,8 @@ const guideLinks = {
   autoProcess: { label: '回复后自动写 Tag', page: 'image-workflow', selector: '[name="autoProcessReplies"]' },
   autoImages: { label: '新标记自动出图', page: 'image-workflow', selector: '[name="autoGenerateImages"]' },
   retention: { label: '自动清理', page: 'image-workflow', selector: '[name="imageRetentionDays"]' },
-  concurrency: { label: isSifangEnvironment() ? '串行生图队列' : '并发生图', page: 'image-workflow',
-    selector: isSifangEnvironment() ? '[aria-labelledby="image-queue-heading"]' : '[name="imageConcurrency"]' },
+  concurrency: { label: (isSifangEnvironment() || isServiceEditor()) ? '串行生图队列' : '并发生图', page: 'image-workflow',
+    selector: (isSifangEnvironment() || isServiceEditor()) ? '[aria-labelledby="image-queue-heading"]' : '[name="imageConcurrency"]' },
   tia: { label: '桌宠缇娅', page: 'preferences', selector: '[aria-labelledby="pet-heading"]' },
   exportConfig: { label: '导出配置', page: 'preferences', selector: '[data-config-transfer] .config-section' },
   importConfig: { label: '导入配置', page: 'preferences', selector: '[data-transfer-file]' },
@@ -62,7 +63,7 @@ export const navigationPaints: Record<string, string> = {
   guide: '#EBA63A', connections: '#E6872A', features: '#C8A04C', review: '#8C6649', preferences: '#5C3D2A',
 };
 
-export function navigationView(page: PageId): string {
+export function navigationView(page: PageId, client = false): string {
   function branch(items: readonly NavigationItem[], depth = 0): string {
     return items.map((item, index) => {
       const children = item.children?.length ? branch(item.children, depth + 1) : '';
@@ -76,7 +77,11 @@ export function navigationView(page: PageId): string {
       </div>`;
     }).join('');
   }
-  return `<i class="wash-mark" aria-hidden="true"></i>` + branch(navigation);
+  const items = client ? [
+    { group: 'preferences', page: 'preferences', title: '服务连接' },
+    { group: 'review', page: 'review', title: '生图回顾' },
+  ] as const : navigation;
+  return `<i class="wash-mark" aria-hidden="true"></i>` + branch(items);
 }
 
 function node(page: PageId): string {
@@ -150,6 +155,7 @@ function guideView(): string {
 
 function hostSyncView(): string {
   if (!isTauriHost()) return '';
+  if (isServiceEditor()) return '';
   if (!getHostStore()) return '<p class="config-status">当前 TT 版本未提供完整的扩展数据存储，配置仍保存在本机。更新 TT 后重新打开画匣即可迁移。</p>';
   return `<section class="image-settings" aria-label="TauriTavern 配置同步">
     <header class="section-heading section-heading--plain"><h2 class="section-title">TauriTavern 同步</h2>
@@ -168,17 +174,17 @@ function imageWorkflowView(settings: Settings): string {
       <label class="preference-row"><span><strong>回复后自动写 Tag</strong><span>原“自动 AI 生图”。新正文及酒馆助手后续任务结束、正文稳定 3 秒后，调用已保存的模型 API 和预设，写入配图标记。只开启此项时，图片由你手动生成。会消耗模型 API 额度。</span></span><input type="checkbox" name="autoProcessReplies" ${settings.autoProcessReplies ? 'checked' : ''}></label>
       <label class="preference-row"><span><strong>新标记自动出图</strong><span>原“自动点击生图”。仅将最新回复中新出现的配图标记自动送入生图队列；配合上一项即可全程自动出图。已有图片跳过，失败不自动重试；打开聊天或开启功能时不补跑历史标记。会消耗生图额度。</span></span><input type="checkbox" name="autoGenerateImages" ${settings.autoGenerateImages ? 'checked' : ''}></label>
       <p class="config-status" data-workflow-status role="status">${workflowStatus(settings)}</p>
-      <label class="preference-row"><span><strong>自动出图等待与间隔</strong><span>正文稳定后先等待此时长；逐张绘制时，每张结束后再等此时长。${isSifangEnvironment() ? '' : '并发时，空位按此间隔依次补入新任务。'}填 0 为立即接上，默认 1 秒，最多 ${MAX_AUTO_IMAGE_DELAY} 秒。</span></span>
+      <label class="preference-row"><span><strong>自动出图等待与间隔</strong><span>正文稳定后先等待此时长；逐张绘制时，每张结束后再等此时长。${(isSifangEnvironment() || isServiceEditor()) ? '' : '并发时，空位按此间隔依次补入新任务。'}填 0 为立即接上，默认 1 秒，最多 ${MAX_AUTO_IMAGE_DELAY} 秒。</span></span>
         <span class="preference-number"><input type="number" name="autoImageDelay" min="0" max="${MAX_AUTO_IMAGE_DELAY}" step="0.1" inputmode="decimal" value="${settings.autoImageDelay}" aria-label="自动出图等待与间隔（秒）">秒</span></label>
     </section>
     <section class="preference-section" aria-labelledby="image-queue-heading">
-      <header class="section-heading section-heading--plain"><h3 id="image-queue-heading" class="section-title">并发与队列</h3><p class="section-description">${isSifangEnvironment() ? '独立服务统一排队，每次只绘制一张。' : '正文配图、重绘、试绘和角色图共用同一队列，按入队顺序开始。'}</p></header>
-      ${isSifangEnvironment() ? '' : `<label class="preference-row"><span><strong>最大同时生图数</strong><span>默认 1 张，可设为 1～${MAX_IMAGE_CONCURRENCY} 张。调低时正在生成的图片继续完成，后续按新上限开始；模型写 Tag 仍一次处理一条回复。请按生图服务允许的并发数设置。</span></span>
+      <header class="section-heading section-heading--plain"><h3 id="image-queue-heading" class="section-title">并发与队列</h3><p class="section-description">${(isSifangEnvironment() || isServiceEditor()) ? '独立服务统一排队，每次只绘制一张。' : '正文配图、重绘、试绘和角色图共用同一队列，按入队顺序开始。'}</p></header>
+      ${(isSifangEnvironment() || isServiceEditor()) ? '' : `<label class="preference-row"><span><strong>最大同时生图数</strong><span>默认 1 张，可设为 1～${MAX_IMAGE_CONCURRENCY} 张。调低时正在生成的图片继续完成，后续按新上限开始；模型写 Tag 仍一次处理一条回复。请按生图服务允许的并发数设置。</span></span>
         <select name="imageConcurrency" aria-label="最大同时生图数">${Array.from({ length: MAX_IMAGE_CONCURRENCY }, (_, i) => i + 1).map(value => `<option value="${value}"${settings.imageConcurrency === value ? ' selected' : ''}>${value} 张</option>`).join('')}</select></label>`}
       <p class="config-status" data-image-queue-status role="status"></p>
     </section>
     <section class="preference-section" aria-labelledby="image-retention-heading">
-      <header class="section-heading section-heading--plain"><h3 id="image-retention-heading" class="section-title">图片留存</h3><p class="section-description">${isSifangEnvironment() ? '管理独立服务保存的图片历史。' : '管理保存在这台设备上的图片历史。'}</p></header>
+      <header class="section-heading section-heading--plain"><h3 id="image-retention-heading" class="section-title">图片留存</h3><p class="section-description">${(isSifangEnvironment() || isServiceEditor()) ? '管理独立服务保存的图片历史。' : '管理保存在这台设备上的图片历史。'}</p></header>
       <label class="preference-row"><span><strong>自动清理生图</strong><span>按生成时间清理所有角色卡的本机图片历史；角色锚定图保留。开启后立即清理，关闭酒馆期间的过期图片会在下次打开时清理。</span></span>
         <select name="imageRetentionDays" aria-label="图片保留时间">${[[0, '关闭'], [1, '保留 1 天'], [3, '保留 3 天'], [7, '保留 7 天']].map(([value, label]) => `<option value="${value}"${settings.imageRetentionDays === value ? ' selected' : ''}>${label}</option>`).join('')}</select></label>
       <p class="config-status" data-cleanup-status role="status"></p>
@@ -246,7 +252,8 @@ function featureView(tab: FeatureTab): string {
   </div>`;
 }
 
-export function pageView(page: PageId, settings: Settings, featureTab: FeatureTab = 'anchors'): string {
+export function pageView(page: PageId, settings: Settings, featureTab: FeatureTab = 'anchors', client = false): string {
+  if (client && page === 'preferences') return serviceSettingsView();
   const heading = `<header class="page-heading">
     <p class="eyebrow">${page === 'guide' ? '从这里开始' : page === 'image-workflow' ? '使用偏好 / 出图与生图' : pluginName}</p>
     <h2>${pages[page].title}</h2><p>${pages[page].description}</p>

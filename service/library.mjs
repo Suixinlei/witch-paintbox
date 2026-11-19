@@ -112,6 +112,10 @@ export async function openLibrary(directory) {
   return {
     put, remove, cachedEncoding,
     count: () => index.size,
+    async image(id, acceptsScope) {
+      const entry = index.get(id);
+      return pack(entry && acceptsScope(historyScope(entry.markerKey)) ? [entry] : []);
+    },
     async marker(key) { return pack(latest().filter(entry => entry.markerKey === key).reverse()); },
     async page(scope, before, limit) {
       const match = latest().filter(entry => (scope === null || entry.scope === scope)

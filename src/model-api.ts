@@ -1,3 +1,4 @@
+import { isServiceEditor } from './service-client.js';
 import type { ModelApiSettings, ModelMessage, ModelRequestOptions, ModelTransport } from './model-types.js';
 import type { PetFault } from './pet-events.js';
 import { isSifangEnvironment } from './sifang-host.js';
@@ -124,7 +125,7 @@ export async function fetchModelList(
   settings: Pick<ModelApiSettings, 'url' | 'key'>,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  if (isSifangEnvironment()) {
+  if (isSifangEnvironment() || isServiceEditor()) {
     const { requestServiceModels } = await import('./service-client.js');
     return requestServiceModels('models', settings, signal);
   }

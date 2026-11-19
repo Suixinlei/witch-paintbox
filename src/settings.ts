@@ -1,13 +1,21 @@
 import { isPageId, type PageId } from './pages.js';
 import type { PetPlacement, PetSpot } from './pet/api.js';
+import { configurationStorage } from './host-storage.js';
 
 export const extensionId = 'tavern-image-plugin';
 const preferencesKey = 'witch-paintbox.preferences.v1';
-let preferencesStorage: Storage | undefined;
+let preferencesStorage: ReturnType<typeof configurationStorage> | undefined;
 let localPreferences: Settings | undefined;
+let clientPreferences: Partial<Settings> | undefined;
+
+export function setClientPreferences(preferences: Partial<Settings>): void {
+  if (JSON.stringify(clientPreferences) === JSON.stringify(preferences)) return;
+  clientPreferences = preferences;
+  window.dispatchEvent(new Event('witch-paintbox:preferences-changed'));
+}
 
 export function bindLocalPreferences(context: TavernContext, signal: AbortSignal): void {
-  const storage = window.localStorage;
+  const storage = configurationStorage();
   const raw = storage.getItem(preferencesKey);
   if (raw === null && context.extensionSettings[extensionId] !== undefined) {
     const migrated = validateSettings(context.extensionSettings[extensionId]);
@@ -129,7 +137,7 @@ export function readPetPlacement(value: unknown): PetPlacement | null {
 }
 
 export function readSettings(context: TavernContext): Settings {
-  return localPreferences ? structuredClone(localPreferences) : validateSettings(context.extensionSettings[extensionId]);
+  return { ...(localPreferences ? structuredClone(localPreferences) : validateSettings(context.extensionSettings[extensionId])), ...structuredClone(clientPreferences) };
 }
 
 function validateSettings(raw: unknown): Settings {
@@ -182,6 +190,6 @@ export function saveExcludedTags(tags: readonly string[]): string[] {
 
 export function currentPreferences(): Settings {
   const host = (globalThis as typeof globalThis & { SillyTavern?: { getContext(): TavernContext } }).SillyTavern;
-  if (localPreferences) return structuredClone(localPreferences);
+  if (localPreferences) return { ...structuredClone(localPreferences), ...structuredClone(clientPreferences) };
   return host ? readSettings(host.getContext()) : defaultSettings();
 }

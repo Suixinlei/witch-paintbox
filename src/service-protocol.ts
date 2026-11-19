@@ -14,7 +14,7 @@ export type HistoryDraft = Pick<ImageHistoryEntry, 'id' | 'markerKey' | 'scenePr
 export interface PersistedImage { id: string; createdAt: number; error?: string }
 export type WorkshopParameters = Pick<ImageSettings, 'parameters' | 'openaiParameters' | 'geminiParameters' | 'grokParameters' | 'negative'>;
 export type ServicePrompt =
-  | { prompt: PreparedImagePrompt }
+  | { prompt: PreparedImagePrompt; size?: ImageSize }
   | { scene: string; size?: ImageSize; workshop?: WorkshopParameters };
 export type ConfigVibe = Omit<VibeItem, 'image' | 'thumbnail'> & { imageIndex: number | null; thumbnailIndex: number | null };
 export interface ServiceConfigManifest {
@@ -27,7 +27,8 @@ export interface ServicePlanRequest {
   original: string;
   excludedTags: readonly string[];
   items?: readonly IllustrationItem[];
-  draw?: { scope: string; chatId: string; historyId: string; sourceName?: string; delay: number };
+  maxImages?: number;
+  draw?: { scope: string; chatId: string; historyId: string; sourceName?: string; delay: number; dynamicSize?: boolean };
 }
 export interface ServicePicture {
   start: number;
