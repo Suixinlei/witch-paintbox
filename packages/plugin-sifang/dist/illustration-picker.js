@@ -3,6 +3,8 @@ import { textLines } from './image-text-regions.js';
 import { bindPanelViewport } from './panel-viewport.js';
 import { emitPetEvent } from './pet-events.js';
 import { currentPreferences, MAX_EXCLUDED_TAGS, normalizeTagName, saveExcludedTags } from './settings.js';
+import { readSifangFloors } from './sifang-chat.js';
+import { isSifangEnvironment } from './sifang-host.js';
 /** Reading and shopping-list state stay local; submitting uses the shared model pipeline. */
 export function bindIllustrationPicker(root, signal, processor) {
     const panel = document.createElement('dialog');
@@ -17,6 +19,9 @@ export function bindIllustrationPicker(root, signal, processor) {
       <div class="illustration-picker-toolbar">
         <div><p data-source>正在读取最新回复…</p><p class="muted" data-hint>点击自然段加入配图清单，每项一张。</p></div>
         <button type="button" class="secondary" data-refresh>重新读取正文</button>
+        ${isSifangEnvironment() ? `<label class="config-field">配图楼层
+          <select data-floor aria-label="配图楼层"><option value="">最新回复</option></select>
+        </label>` : ''}
         <div class="illustration-modes" role="group" aria-label="正文选取方式">
           <button type="button" data-mode="paragraph" aria-pressed="true">正文原文</button>
           <button type="button" data-mode="lines" aria-pressed="false">选取文段</button>
@@ -54,6 +59,7 @@ export function bindIllustrationPicker(root, signal, processor) {
         <div class="illustration-picker-actions">
           <span class="muted" data-count>清单 0 项</span>
           <button type="button" class="secondary" data-cancel hidden>取消处理</button>
+          <button type="button" class="secondary" data-fill-floor hidden>AI 补图</button>
           <button type="button" class="primary" data-submit>提交配图清单</button>
         </div>
       </footer>
@@ -63,6 +69,9 @@ export function bindIllustrationPicker(root, signal, processor) {
     const viewport = bindPanelViewport(panel, signal);
     const reading = panel.querySelector('.illustration-reading');
     const source = panel.querySelector('[data-source]');
+    const floorPicker = panel.querySelector('[data-floor]');
+    let floorChoices = new Map();
+    let target;
     const hint = panel.querySelector('[data-hint]');
     const status = panel.querySelector('[data-status]');
     const count = panel.querySelector('[data-count]');
@@ -134,6 +143,11 @@ export function bindIllustrationPicker(root, signal, processor) {
         panel.querySelector('[data-cart-count]').textContent = String(cart.length);
         panel.querySelector('[data-drawer-count]').textContent = String(cart.length);
         button('submit').disabled = busy || !selection || !cart.length || (manual && firstLine !== null);
+        button('submit').textContent = target ? '提交清单并生图' : '提交配图清单';
+        button('fill-floor').hidden = !target;
+        button('fill-floor').disabled = busy || !selection || !!cart.length || firstLine !== null;
+        if (floorPicker)
+            floorPicker.disabled = busy;
         button('clear').disabled = busy || !cart.length;
         button('refresh').disabled = busy;
         button('cancel').hidden = !running;
@@ -311,16 +325,16 @@ export function bindIllustrationPicker(root, signal, processor) {
         clearRange();
         pointOffsets.clear();
         reading.replaceChildren();
-        source.textContent = '正在读取最新回复…';
+        source.textContent = target ? `正在读取第 ${target.floor + 1} 楼…` : '正在读取最新回复…';
         showStatus('');
         renderCart();
         try {
-            const current = await processor.prepareSelection();
+            const current = await processor.prepareSelection(target);
             if (version !== readVersion || signal.aborted || !panel.open)
                 return;
             selection = current;
             current.plan.points.forEach(point => pointOffsets.set(point.id, point.offset));
-            source.textContent = `最新 AI 回复 · ${textLines(current.plan.original).length} 行`;
+            source.textContent = `${target ? `第 ${current.snapshot.messageId + 1} 楼` : '最新 AI 回复'} · ${textLines(current.plan.original).length} 行`;
             renderReading();
         }
         catch (error) {
@@ -336,14 +350,18 @@ export function bindIllustrationPicker(root, signal, processor) {
             }
         }
     }
-    async function submit() {
-        if (!selection || !cart.length || running || loading || processor.busy || (manualMode() && firstLine !== null))
+    async function submit(auto = false) {
+        if (!selection || running || loading || processor.busy || (manualMode() && firstLine !== null))
+            return;
+        if (auto ? !target || !!cart.length : !cart.length)
             return;
         running = true;
         cancellable = true;
         syncControls();
         try {
-            const saved = await processor.process({ ...selection, items: cart });
+            const saved = await processor.process(auto ? undefined : { ...selection, items: cart }, {
+                snapshot: selection.snapshot, draw: target ? 'manual' : undefined,
+            });
             if (saved) {
                 selection = null;
                 cart = [];
@@ -364,6 +382,10 @@ export function bindIllustrationPicker(root, signal, processor) {
     }
     button('close').addEventListener('click', close, { signal });
     button('refresh').addEventListener('click', () => { void read(); }, { signal });
+    floorPicker?.addEventListener('change', () => {
+        target = floorChoices.get(floorPicker.value);
+        void read();
+    }, { signal });
     button('clear').addEventListener('click', () => { cart = []; clearRange(); renderCart(); showStatus(''); }, { signal });
     button('clear-range').addEventListener('click', () => { clearRange(); syncControls(); }, { signal });
     button('add-range').addEventListener('click', () => {
@@ -378,6 +400,7 @@ export function bindIllustrationPicker(root, signal, processor) {
         showStatus(`已加入第 ${cart.length} 项。`);
     }, { signal });
     button('cancel').addEventListener('click', () => processor.cancel(), { signal });
+    button('fill-floor').addEventListener('click', () => { void submit(true); }, { signal });
     button('submit').addEventListener('click', () => { void submit(); }, { signal });
     modes.addEventListener('click', event => {
         const target = event.target.closest('button[data-mode]');
@@ -469,6 +492,26 @@ export function bindIllustrationPicker(root, signal, processor) {
             if (saved.join('\n') !== excludedTags.join('\n')) {
                 excludedTags = saved;
                 selection = null;
+            }
+            if (floorPicker) {
+                const previous = target && JSON.stringify([target.saveId, target.volume, target.node, target.floor]);
+                const floors = readSifangFloors();
+                floorChoices = new Map();
+                const options = document.createDocumentFragment();
+                options.append(new Option('最新回复', ''));
+                const latest = floors.at(-1);
+                for (const floor of [...floors].reverse()) {
+                    if (floor.role !== 'assistant' || floor === latest || !floor.raw.trim())
+                        continue;
+                    const key = JSON.stringify([floor.saveId, floor.volume, floor.node, floor.floor]);
+                    floorChoices.set(key, floor);
+                    options.append(new Option(`第 ${floor.floor + 1} 楼${floor.name ? ` · ${floor.name.slice(0, 40)}` : ''}`, key));
+                }
+                floorPicker.replaceChildren(options);
+                target = floorChoices.get(previous ?? '');
+                floorPicker.value = target ? previous ?? '' : '';
+                if (previous && !target)
+                    selection = null;
             }
             renderExcluded();
             excludedNote.textContent = '';

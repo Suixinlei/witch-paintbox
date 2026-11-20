@@ -107,7 +107,7 @@ export async function prepareImagePrompt(scene: string, globalNegative: string, 
     ? [original, anchored].filter(text => text.trim()).join(', ') : original;
   return {
     // Artist tags are not protocol input and are added to the global field only.
-    positive: [expanded.positive, artistPositive].filter(text => text.trim()).join(', '),
+    positive: [artistPositive, expanded.positive].filter(text => text.trim()).join(', '),
     negative: mergeNegative(globalNegative, expanded.negative),
     characters: parsed.characters.map(character => {
       const expanded = expand(character.positive);

@@ -26,7 +26,7 @@ test('Risu planning output keeps environmental tags global and expands unambiguo
   ] } });
   const scene = '1boy, 1girl | garden, moonlight | @露米, holding a lantern | @小仁, walking';
   const prepared = await prepareImagePrompt(scene, '', 'watercolor', 22, { anchors, outfits: [] });
-  assert.equal(prepared.positive, '1boy, 1girl, garden, moonlight, watercolor');
+  assert.equal(prepared.positive, 'watercolor, 1boy, 1girl, garden, moonlight');
   assert.deepEqual(prepared.characters.map(character => character.positive), ['white hair, holding a lantern', 'black hair, walking']);
 });
 

@@ -127,7 +127,7 @@ export async function prepareConfiguredPrompt(snapshot: ImageSettings, scene: st
     if (expanded.negative.trim()) {
       throw withFault(new Error(`${name} 生图不支持角色独立负面提示词，请清空该角色的负面词或切换 NAI。`), 'setup');
     }
-    return { positive: [expanded.positive, artistPositive].filter(value => value.trim()).join(', '), negative: '', characters: [] };
+    return { positive: [artistPositive, expanded.positive].filter(value => value.trim()).join(', '), negative: '', characters: [] };
   }
   const model = snapshot.parameters.model;
   const characterLimit = model === 'nai-diffusion-3' ? 0 : model.startsWith('nai-diffusion-5') ? 22 : 6;

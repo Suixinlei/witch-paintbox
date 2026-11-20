@@ -41,7 +41,7 @@ export function bindLauncherMenu(launcher, root, signal, configure, options = {}
     menu.innerHTML = `<i class="menu-tail" aria-hidden="true"></i>
     <p class="menu-eyebrow" aria-hidden="true">从画匣里取出……</p>
     ${item('data-process', '让预设 AI 为最新回复插入配图标记', 'AI生图', '为最新回复挑画面', icons.brush, '#E6872A')}
-    ${item('data-select', '', '指定插图', '自己圈出要画的段落', icons.card, '#C8A04C')}
+    ${item('data-select', '', '指定插图', isSifangEnvironment() ? '选楼层、指定段落或补图' : '自己圈出要画的段落', icons.card, '#C8A04C')}
     ${item('data-configure', '', isSifangEnvironment() ? '画匣' : '设置', isSifangEnvironment() ? '服务连接与生图回顾' : '接口、锚定与偏好', icons.knife, '#8C6649')}
     <p role="status"></p><button type="button" data-cancel hidden>取消处理</button>`;
     root.append(menu);

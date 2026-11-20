@@ -225,12 +225,12 @@ export function watchSifangChat(callback) {
     listeners.add(callback);
     return () => listeners.delete(callback);
 }
-function snapshotFor(floor, latestNode = floors.at(-1)?.node ?? floor.node, length = floors.length) {
+function snapshotFor(floor, latestNode) {
     const snapshot = Object.freeze({
         chatId: chatId({ id: floor.saveId, volume: floor.volume, name: '' }), messageId: floor.floor,
         swipeId: Math.max(0, floor.version - 1), text: floor.raw,
     });
-    snapshots.set(snapshot, { floor, latestNode, length });
+    snapshots.set(snapshot, { floor, latestNode, length: floors.length });
     return snapshot;
 }
 export async function isSifangChatReady() {
@@ -251,7 +251,20 @@ export async function isSifangChatReady() {
         return false;
     }
 }
-export async function captureSifangAssistant() {
+export async function captureSifangAssistant(target) {
+    if (target) {
+        await awaitSifangChatRefresh();
+        const floor = readSifangFloor(target.floor);
+        if (!floor || floor.role !== 'assistant' || floor.node !== target.node
+            || floor.saveId !== target.saveId || floor.volume !== target.volume) {
+            throw new Error('所选楼层已变化，请重新选择。');
+        }
+        if (!floor.raw.trim())
+            throw new Error('所选 AI 回复为空。');
+        const snapshot = snapshotFor(floor);
+        await assertSifangSnapshot(snapshot);
+        return snapshot;
+    }
     await refresh('MESSAGE_UPDATED');
     const host = requireSifangHost();
     const latest = await host.game.floor();
@@ -279,16 +292,18 @@ export async function assertSifangSnapshot(snapshot) {
     const [current, line, active, latest] = await Promise.all([
         host.game.floor(saved.floor), host.game.floors(), host.game.save(), host.game.floor(),
     ]);
-    const lastAssistant = [...line].reverse().find(item => item.role === 'assistant');
     if (current)
         checkFloor(current);
     if (latest)
         checkFloor(latest);
     requireIdle(latest);
     requireIdle(current);
+    const targetIsActive = line.some(item => item.floor === saved.floor && item.node === saved.node && item.role === 'assistant');
+    const latestChanged = state.latestNode !== undefined && (latest?.role !== 'assistant' || latest.node !== state.latestNode
+        || line.length !== state.length || [...line].reverse().find(item => item.role === 'assistant')?.node !== saved.node);
     if (!active || !current || !belongs(saved, active) || !belongs(current, active) || !latest || !belongs(latest, active)
-        || current.node !== saved.node || current.version !== saved.version || current.raw !== snapshot.text || lastAssistant?.node !== saved.node
-        || latest.role !== 'assistant' || latest.node !== state.latestNode || line.length !== state.length) {
+        || current.role !== 'assistant' || current.floor !== saved.floor || current.node !== saved.node
+        || current.version !== saved.version || current.raw !== snapshot.text || !targetIsActive || latestChanged) {
         throw new Error('聊天或原回复已发生变化，本次结果没有写回。');
     }
     return saved;
@@ -313,5 +328,5 @@ export async function replaceSifangAssistant(snapshot, text, signal) {
         saving = false;
     }
     await refresh('MESSAGE_UPDATED', saved.floor);
-    return snapshotFor(committed);
+    return snapshotFor(committed, snapshots.get(snapshot)?.latestNode);
 }

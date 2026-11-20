@@ -187,7 +187,7 @@ try {
       raw: `历史楼层 ${index}`, text: `历史楼层 ${index}`,
     }));
     const line = [...history, floor].map(({ floor, node, role }) => ({ floor, node, role }));
-    window.fixture = { floor, context, writes: 0, floorReadsAfterWrite: [], markers: [], view: null, notices: [],
+    window.fixture = { floor, history, context, writes: 0, floorReadsAfterWrite: [], markers: [], view: null, views: {}, notices: [],
       emit(name, value) { for (const callback of listeners.get(name) ?? []) callback(value); } };
     window.Sifang = {
       apiVersion: 1, capabilities: ['native-game', 'native-events', 'native-text-write', 'native-image-markers'],
@@ -198,18 +198,21 @@ try {
         },
         async floors() { return line; },
         async save() { return { id: floor.saveId, name: 'Fixture', volume: null }; },
-        async replaceText({ expectedRaw, raw }) {
-          if (expectedRaw !== floor.raw) throw new Error('stale floor');
+        async replaceText({ saveId, node, volume, expectedRaw, raw }) {
+          const target = node === floor.node ? floor : history.find(item => item.node === node);
+          if (!target || target.saveId !== saveId || target.volume !== volume || expectedRaw !== target.raw) throw new Error('stale floor');
           fixture.writes++;
-          floor.raw = floor.text = raw;
-          fixture.emit('edit', { saveId: floor.saveId, volume: floor.volume, node: floor.node, floor: floor.floor });
-          return { ...floor };
+          target.raw = target.text = raw;
+          fixture.emit('edit', { saveId, volume, node, floor: target.floor });
+          return { ...target };
         },
       },
       ui: {
         async toast(text) { fixture.notices.push(text); },
         async imageMarkers({ markers }) { fixture.markers = markers; },
-        async imageMarker(view) { fixture.view = { ...fixture.view, ...view }; },
+        async imageMarker(view) {
+          fixture.view = fixture.views[view.node] = { ...fixture.views[view.node], ...view };
+        },
       },
       on(name, callback) {
         if (!listeners.has(name)) listeners.set(name, new Set());
@@ -360,10 +363,47 @@ try {
   const stores = await page.evaluate(async () => (await indexedDB.databases()).map(database => database.name));
   assert.deepEqual(stores, []);
 
+  await page.getByRole('button', { name: '关闭魔女画匣', exact: true }).click();
+  await page.locator('.launcher').click();
+  await page.locator('[data-select]').click();
+  const picker = page.getByRole('dialog', { name: '指定插图' });
+  const floorChoice = picker.getByLabel('配图楼层');
+  const latestRaw = await page.evaluate(() => fixture.floor.raw);
+  await floorChoice.selectOption({ label: '第 2 楼 · 测试' });
+  await picker.getByText('历史楼层 1', { exact: true }).waitFor();
+  await picker.getByRole('button', { name: 'AI 补图' }).click();
+  await picker.getByRole('status').filter({ hasText: '已返回 1 张图片' }).waitFor();
+  assert.deepEqual(await page.evaluate(() => [fixture.writes, fixture.floor.raw]), [2, latestRaw]);
+  assert.match(await page.evaluate(() => fixture.history[1].raw), /^历史楼层 1\s*<img>/);
+  assert.equal(calls.at(-1), '/v1/images/generations');
+  await page.waitForFunction(() => fixture.views['history-1']?.blob instanceof Blob);
+
+  await floorChoice.selectOption({ label: '第 4 楼 · 测试' });
+  await picker.locator('button[data-unit]').first().click();
+  const oldPlanStarted = Promise.withResolvers();
+  const oldPlanResume = Promise.withResolvers();
+  pausePlan = () => { oldPlanStarted.resolve(); return oldPlanResume.promise; };
+  await picker.getByRole('button', { name: '提交清单并生图' }).click();
+  try {
+    await oldPlanStarted.promise;
+    await page.evaluate(() => { fixture.history[3].version++; });
+  } finally { oldPlanResume.resolve(); pausePlan = undefined; }
+  await picker.getByRole('status').filter({ hasText: '已发生变化' }).waitFor();
+  assert.deepEqual(await page.evaluate(() => [fixture.writes, fixture.history[3].raw, fixture.floor.raw]), [2, '历史楼层 3', latestRaw]);
+
+  await floorChoice.selectOption({ label: '第 6 楼 · 测试' });
+  await picker.locator('button[data-unit]').first().click();
+  await picker.getByRole('button', { name: '提交清单并生图' }).click();
+  await picker.getByRole('status').filter({ hasText: '已返回 1 张图片' }).waitFor();
+  assert.deepEqual(await page.evaluate(() => [fixture.writes, fixture.floor.raw]), [3, latestRaw]);
+  assert.match(await page.evaluate(() => fixture.history[5].raw), /^历史楼层 5\s*<img>/);
+  await page.waitForFunction(() => fixture.views['history-5']?.blob instanceof Blob);
+  assert.deepEqual(errors, []);
+
   await admin.locator('#logout').click();
   await admin.locator('#auth').waitFor();
   assert.equal(await admin.evaluate(() => sessionStorage.getItem('witch-paintbox.admin-token')), null);
-  console.log('Sifang browser passed: local auto-prompt preference, manual redraw without effects, and on-demand history without IndexedDB');
+  console.log('Sifang browser passed: historical fill, stale historical floor protection, auto-prompt, redraw and on-demand history');
 } finally {
   await browser?.close();
   if (child.exitCode === null && child.signalCode === null) {

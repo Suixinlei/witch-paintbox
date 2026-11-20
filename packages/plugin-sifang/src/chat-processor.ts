@@ -9,6 +9,7 @@ import { stageSifangBatch } from './sifang-batch.js';
 import { notifyImageHistorySaved } from './image-history.js';
 import { imagePlanningInput } from './image-planning.js';
 import { isSifangEnvironment } from './sifang-host.js';
+import { captureSifangAssistant, type SifangFloorTarget } from './sifang-chat.js';
 import type { ImageInsertionResult } from './image-insertion.js';
 import { emitPetEvent, petFault, petTaskId, withFault } from './pet-events.js';
 import { imageSizeMode } from './image-size-mode.js';
@@ -53,15 +54,15 @@ export class ChatProcessor {
 
   cancel(): void { if (!this.committing) this.request?.abort(); }
 
-  async prepareSelection(): Promise<IllustrationSelection> {
+  async prepareSelection(target?: SifangFloorTarget): Promise<IllustrationSelection> {
     if (this.busy) throw new Error('请先完成或取消当前 AI 处理。');
     if (!isSifangEnvironment()) processingSettings();
-    const selection = await captureSelection(true);
+    const selection = await captureSelection(true, target && await captureSifangAssistant(target));
     if (this.busy) throw new Error('请先完成或取消当前 AI 处理。');
     return selection;
   }
 
-  async process(selection?: SelectedIllustrationRequest, options: { snapshot?: ChatSnapshot; signal?: AbortSignal; draw?: boolean } = {}): Promise<boolean> {
+  async process(selection?: SelectedIllustrationRequest, options: { snapshot?: ChatSnapshot; signal?: AbortSignal; draw?: boolean | 'manual' } = {}): Promise<boolean> {
     if (this.request) return false;
     const controller = new AbortController();
     const cancel = () => { if (!this.committing) controller.abort(); };
@@ -71,7 +72,7 @@ export class ChatProcessor {
     const pet = petTaskId();
     let floor: number | undefined;
     let discardBatch: (() => void) | undefined;
-    this.report('正在读取最新回复…', true);
+    this.report('正在核对回复…', true);
     emitPetEvent({ type: 'process', id: pet, phase: 'reading', cancellable: true });
     try {
       const native = isSifangEnvironment();
@@ -92,13 +93,13 @@ export class ChatProcessor {
         const { requestServicePlan } = await import('./service-client.js');
         const preferences = currentPreferences();
         let draw;
-        if (options.draw && preferences.autoGenerateImages) {
+        if (options.draw === 'manual' || (options.draw && preferences.autoGenerateImages)) {
           const context = imageChatContext();
           const message = readAssistantMessages().find(item => item.chatId === snapshot.chatId
             && item.messageId === snapshot.messageId && item.text === snapshot.text);
           if (!context || !message?.historyId) throw withFault(new Error('当前楼层无法确认配图身份，请重新打开存档。'), 'host');
           draw = { scope: message.scope, chatId: message.chatId, historyId: message.historyId,
-            sourceName: context.name, delay: preferences.autoImageDelay };
+            sourceName: context.name, delay: options.draw === 'manual' ? 0 : preferences.autoImageDelay };
         }
         const reply = await requestServicePlan({
           original: snapshot.text, excludedTags: preferences.excludedTags, items: selection?.items, draw,
