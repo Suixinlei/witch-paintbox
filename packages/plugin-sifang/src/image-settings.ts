@@ -1,18 +1,11 @@
 import { createSettingsStorage } from './host-settings.js';
-import { defaultOpenAIImageParameters, validateOpenAIImageParameters, type OpenAIImageParameters } from './openai-image.js';
 import { withFault } from './pet-events.js';
 
-import {
-  defaultGeminiImageParameters, defaultGrokImageParameters, validateGeminiImageParameters, validateGrokImageParameters,
-  type GeminiImageParameters, type GrokImageParameters,
-} from './aspect-image.js';
-
-export type ImageProvider = 'novelai' | 'openai' | 'gemini' | 'grok';
-export const IMAGE_PROVIDERS: readonly ImageProvider[] = ['novelai', 'openai', 'gemini', 'grok'];
-/** Providers that send one natural-language prompt: no negative field, no NAI columns. */
-export function isNaturalLanguageProvider(provider: ImageProvider): boolean { return provider !== 'novelai'; }
+/** NovelAI is the only drawing channel; GPT / Gemini / Grok were removed as legacy channels. */
+export type ImageProvider = 'novelai';
+export const IMAGE_PROVIDERS: readonly ImageProvider[] = ['novelai'];
 export function imageProviderName(provider: ImageProvider): string {
-  return { novelai: 'NAI', openai: 'GPT', gemini: 'Gemini', grok: 'Grok' }[provider];
+  return { novelai: 'NAI' }[provider];
 }
 import {
   defaultImageParameters,
@@ -37,10 +30,6 @@ export interface ArtistPreset {
 
 export interface ImageSettings {
   provider: ImageProvider;
-  openaiParameters: OpenAIImageParameters;
-  geminiParameters: GeminiImageParameters;
-  grokParameters: GrokImageParameters;
-  models: string[];
   connection: ImageConnection;
   connectionProfiles: ConnectionProfile[];
   activeConnectionId: string;
@@ -59,10 +48,9 @@ export interface AllImageSettings {
 
 const storageKey = 'witch-paintbox:image-settings:v1';
 
-export function defaultImageSettings(provider: ImageProvider = 'novelai'): ImageSettings {
+export function defaultImageSettings(): ImageSettings {
   return {
-    provider, openaiParameters: defaultOpenAIImageParameters(), models: [],
-    geminiParameters: defaultGeminiImageParameters(), grokParameters: defaultGrokImageParameters(),
+    provider: 'novelai',
     connection: { channel: 'official', url: '', key: '', appendSuffix: true },
     connectionProfiles: [],
     activeConnectionId: '',
@@ -154,11 +142,7 @@ function selectedId(value: unknown, items: { id: string }[]): string {
 export function validateImageSettings(value: unknown): ImageSettings {
   const source = record(value);
   const provider = (source.provider ?? 'novelai') as ImageProvider;
-  if (!IMAGE_PROVIDERS.includes(provider)) invalid();
-  const models = source.models ?? [];
-  if (!Array.isArray(models) || models.length > 10_000) invalid();
-  const modelNames = models.map(value => text(value, 512, true));
-  if (new Set(modelNames).size !== modelNames.length) invalid();
+  if (provider !== 'novelai') invalid();
   const connectionProfiles = profiles(source.connectionProfiles, value => {
     const item = record(value);
     return { ...connection(item, provider), id: text(item.id, 128, true), name: text(item.name, 128, true) };
@@ -172,15 +156,8 @@ export function validateImageSettings(value: unknown): ImageSettings {
       negative: text(item.negative),
     };
   });
-  if (isNaturalLanguageProvider(provider) && (text(source.negative).trim() || artists.some(item => item.negative.trim()))) {
-    const name = imageProviderName(provider);
-    throw new Error(`${name} 配置不支持独立负面提示词，请先在来源配置中移除负面字段内容，再导入 ${name} 配置。`);
-  }
   return {
-    provider, models: modelNames,
-    openaiParameters: validateOpenAIImageParameters(source.openaiParameters ?? defaultOpenAIImageParameters()),
-    geminiParameters: validateGeminiImageParameters(source.geminiParameters ?? defaultGeminiImageParameters(), invalid),
-    grokParameters: validateGrokImageParameters(source.grokParameters ?? defaultGrokImageParameters(), invalid),
+    provider,
     connection: connection(source.connection, provider),
     connectionProfiles,
     activeConnectionId: selectedId(source.activeConnectionId, connectionProfiles),
@@ -197,32 +174,20 @@ function sameConnection(left: ImageConnection, right: ImageConnection): boolean 
 }
 
 export function defaultAllImageSettings(): AllImageSettings {
-  return { version: 2, activeProvider: 'novelai', profiles: {
-    novelai: defaultImageSettings('novelai'), openai: defaultImageSettings('openai'),
-    gemini: defaultImageSettings('gemini'), grok: defaultImageSettings('grok'),
-  } };
+  return { version: 2, activeProvider: 'novelai', profiles: { novelai: defaultImageSettings() } };
 }
 
 export function validateAllImageSettings(value: unknown): AllImageSettings {
   const source = record(value);
   if (source.version === undefined) {
-    const legacy = validateImageSettings(source);
-    const all = defaultAllImageSettings();
-    all.profiles[legacy.provider] = legacy;
-    all.activeProvider = legacy.provider;
-    return all;
+    // Pre-provider records belong to the original NovelAI profile; legacy GPT-only files are dropped.
+    if ((source.provider ?? 'novelai') !== 'novelai') return defaultAllImageSettings();
+    return { version: 2, activeProvider: 'novelai', profiles: { novelai: validateImageSettings(source) } };
   }
-  if (source.version !== 2 || !IMAGE_PROVIDERS.includes(source.activeProvider as ImageProvider)) invalid();
+  if (source.version !== 2) invalid();
   const profiles = record(source.profiles);
-  // Files from before Gemini / Grok only carry novelai + openai; fill the rest with defaults.
-  const parsed = {} as Record<ImageProvider, ImageSettings>;
-  for (const provider of IMAGE_PROVIDERS) {
-    const raw = profiles[provider];
-    if (raw === undefined && (provider === 'gemini' || provider === 'grok')) { parsed[provider] = defaultImageSettings(provider); continue; }
-    parsed[provider] = validateImageSettings(raw);
-    if (parsed[provider].provider !== provider) invalid();
-  }
-  return { version: 2, activeProvider: source.activeProvider as ImageProvider, profiles: parsed };
+  // Unknown channels and extra profile keys from older files are ignored and never written back.
+  return { version: 2, activeProvider: 'novelai', profiles: { novelai: validateImageSettings(profiles.novelai) } };
 }
 
 const settingsStorage = createSettingsStorage<AllImageSettings>({
@@ -258,13 +223,7 @@ export function loadImageSettings(provider?: ImageProvider): ImageSettings {
 }
 export function saveImageSettings(settings: ImageSettings): Promise<void> {
   const snapshot = validateImageSettings(settings);
-  return settingsStorage.update(all => ({ ...all, profiles: { ...all.profiles, [snapshot.provider]: snapshot } }));
-}
-export async function switchImageProvider(provider: ImageProvider): Promise<void> {
-  if (!IMAGE_PROVIDERS.includes(provider)) invalid();
-  if (settingsStorage.load().activeProvider === provider) return;
-  await settingsStorage.update(all => ({ ...all, activeProvider: provider }));
-  window.dispatchEvent(new Event('witch-paintbox:image-provider-changed'));
+  return settingsStorage.update(all => ({ ...all, activeProvider: 'novelai', profiles: { novelai: snapshot } }));
 }
 /** Bulk import refreshes the UI only after every section commits or rolls back. */
 export function saveAllImageSettings(settings: AllImageSettings): Promise<void> {

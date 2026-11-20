@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { testSharedOutfitPicker } from './shared-outfit-picker-browser.mjs';
-import { testOpenAIImage26 } from './openai-image-26-browser.mjs';
 import { testIllustrationPicker } from './illustration-picker-browser.mjs';
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -174,12 +173,11 @@ try {
     assert.equal(await panel.locator('[name="imageConcurrency"]').inputValue(), '1');
     assert.equal(await panel.locator('[name="autoProcessReplies"]').isChecked(), false);
     assert.equal(await panel.locator('[name="autoGenerateImages"]').isChecked(), false);
-    const image26 = await testOpenAIImage26(page, panel, screenshots);
     const outfits = await testSharedOutfitPicker(page, panel, screenshots);
     assert.deepEqual(errors, []);
     const illustration = await testIllustrationPicker(page, screenshots);
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ result: 'passed', archiveResult, importedQueueLimit, geometry, image26, outfits, illustration, screenshots }, null, 2));
+    console.log(JSON.stringify({ result: 'passed', archiveResult, importedQueueLimit, geometry, outfits, illustration, screenshots }, null, 2));
   }
 } finally {
   await browser?.close(); await new Promise(resolve => server.close(resolve));

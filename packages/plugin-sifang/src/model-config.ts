@@ -60,18 +60,15 @@ export class ModelConfig {
 
   constructor() {
     this.reloadSaved();
-    const providerChanged = () => this.switchPresetProvider();
     const sizeModeSaving = () => this.syncSave();
     const sizeModeChanged = (event: Event) => {
       const detail = (event as CustomEvent<{ provider: ImageProvider; mode: ImageSizeSelection }>).detail;
       if (!detail || !IMAGE_PROVIDERS.includes(detail.provider) || (detail.mode !== null && !['fixed', 'ai'].includes(detail.mode))) return;
       this.applySavedSizeMode(detail.provider, detail.mode);
     };
-    window.addEventListener('witch-paintbox:image-provider-changed', providerChanged);
     window.addEventListener('witch-paintbox:image-size-mode-changed', sizeModeChanged);
     window.addEventListener('witch-paintbox:image-size-mode-saving', sizeModeSaving);
     this.unsubscribe = [
-      () => window.removeEventListener('witch-paintbox:image-provider-changed', providerChanged),
       () => window.removeEventListener('witch-paintbox:image-size-mode-changed', sizeModeChanged),
       () => window.removeEventListener('witch-paintbox:image-size-mode-saving', sizeModeSaving),
       onFeatureLayersChanged(() => { this.ensureLayerSlots(); this.render(); }),
@@ -540,12 +537,18 @@ export class ModelConfig {
           if (input.value === 'off' || input.value === 'low') settings.thinkingMode = input.value;
           else settings.thinkingMode = 'default';
           break;
+        case 'jsonOutput': settings.jsonOutput = input.value === 'json_object'; break;
         case 'transport':
           if (['nonstream', 'stream', 'compatible', 'toolcall'].includes(input.value)) settings.transport = input.value as ModelSettings['transport']; break;
       }
-      if (field === 'url' || field === 'key' || field === 'mode') {
+      if (field === 'url' || field === 'mode' || field === 'transport') {
+        const deepSeek = settings.mode === 'custom' && supportsDeepSeekThinking(settings.url);
         const thinking = this.container?.querySelector<HTMLElement>('[data-deepseek-thinking]');
-        if (thinking) thinking.hidden = settings.mode !== 'custom' || !supportsDeepSeekThinking(settings.url);
+        const json = this.container?.querySelector<HTMLElement>('[data-deepseek-json]');
+        if (thinking) thinking.hidden = !deepSeek;
+        if (json) json.hidden = !deepSeek || settings.transport === 'toolcall';
+      }
+      if (field === 'url' || field === 'key' || field === 'mode') {
         this.refresh?.abort(); this.refresh = null; this.syncRefresh();
         if (field !== 'mode') { settings.models = []; this.renderModelPicker(); }
       }

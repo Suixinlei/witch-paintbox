@@ -126,7 +126,7 @@ function guideView() {
     <section class="guide-flow" aria-labelledby="guide-flow-heading">
       <h3 id="guide-flow-heading">从正文到配图</h3>
       <ol class="guide-steps">
-        <li><span class="guide-step-number" aria-hidden="true">01</span><div><h4>连接接口，导入预设</h4><p>选择 NAI 或 GPT，配置两类 API，再导入对应服务的预设。</p></div></li>
+        <li><span class="guide-step-number" aria-hidden="true">01</span><div><h4>连接接口，导入预设</h4><p>连接 NovelAI，配置生图与模型 API，再导入 NAI 预设。</p></div></li>
         <li><span class="guide-step-number" aria-hidden="true">02</span><div><h4>补充角色与世界资料</h4><p>按需要配置标签锚定、上传世界书，并勾选要挂载的条目。</p></div></li>
         <li><span class="guide-step-number" aria-hidden="true">03</span><div><h4>让 AI 处理最新回复</h4><p>打开悬浮球菜单，点击“AI生图”，为正文插入配图位置；也可在使用偏好的“出图与生图”中开启“回复后自动写 Tag”，正文写完自动处理。</p></div></li>
         <li><span class="guide-step-number" aria-hidden="true">04</span><div><h4>在楼层中生成图片</h4><p>点击“生成图片”，或在使用偏好的“出图与生图”中开启“新标记自动出图”。已保存图片可在生图回顾中翻看。</p></div></li>

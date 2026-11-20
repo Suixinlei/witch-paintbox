@@ -4,7 +4,7 @@
 
 | 包 | 职责 |
 | --- | --- |
-| [`packages/server`](packages/server) | 插图规划、绘图队列、配置管理和图片历史。四方与 Risu 共用服务。 |
+| [`packages/server`](packages/server) | 插图规划、NovelAI 绘图队列、配置管理和图片历史。四方与 Risu 共用服务。 |
 | [`packages/plugin-sifang`](packages/plugin-sifang/README.md) | 四方世界和 SillyTavern 插件。服务端复用本包的画图模块。 |
 | [`packages/plugin-risu`](packages/plugin-risu/README.md) | Risu API 3.0 插件，负责读取回合、提交配图任务并挂载图片。 |
 
@@ -32,4 +32,4 @@ pnpm test
 - **四方世界**沿用仓库根目录的 [`manifest.json`](manifest.json)。发布时提交 `packages/plugin-sifang/dist/`，宿主会通过根清单加载该目录的构建产物。
 - **Risu** 构建产物位于 `packages/plugin-risu/dist/plugin.js`。运行 `pnpm --filter @witch-paintbox/plugin-risu deploy` 可复制到与本仓库同级的 Risu 工作目录。更新本地已安装插件可使用 [Risu 更新脚本](packages/plugin-risu/skills/risu-plugin-update/SKILL.md)。
 
-Windows 本机的服务部署、四方发布和 Risu 应用流程见[三端运维 Skill](skills/witch-paintbox-operations/SKILL.md)。
+Windows 本机的服务部署、四方发布和 Risu 应用流程见[项目级三端运维 Skill](.agents/skills/witch-paintbox-operations/SKILL.md)。

@@ -191,6 +191,12 @@ export function modelSettingsView(settings, state) {
         <select data-model-field="thinkingMode">${options([
         { value: 'default', label: '跟随模型' }, { value: 'off', label: '关闭思考' }, { value: 'low', label: '低强度思考' },
     ], settings.thinkingMode ?? 'default')}</select>
+      </label>
+      <label class="config-field channel-field" data-deepseek-json${settings.mode === 'custom' && supportsDeepSeekThinking(settings.url) && settings.transport !== 'toolcall' ? '' : ' hidden'}>
+        <span>DeepSeek 配图响应格式</span>
+        <select data-model-field="jsonOutput">${options([
+        { value: 'text', label: '默认文本' }, { value: 'json_object', label: 'JSON 对象（json_object）' },
+    ], settings.jsonOutput ? 'json_object' : 'text')}</select>
       </label>` : ''}
       <div class="parameter-group"><h3 class="subsection-title">回复参数</h3><div class="parameter-grid model-parameters">
         <label class="config-field"><span>最大回复长度 · max tokens</span>

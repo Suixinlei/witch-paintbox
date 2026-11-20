@@ -1,9 +1,17 @@
 import type { ImageParameters } from './novelai.js';
 import type { CharacterPrompt } from './image-prompt.js';
-import type { OpenAIImageParameters } from './openai-image.js';
-import type { GeminiImageParameters, GrokImageParameters } from './aspect-image.js';
 
 export type Sized<T> = T & { width: number; height: number };
+
+/** Loose shape for images drawn by the removed GPT / Gemini / Grok channels; kept only to render old records. */
+export interface LegacyImageParameters {
+  model: string;
+  width: number;
+  height: number;
+  [key: string]: unknown;
+}
+
+export type LegacyImageProvider = 'openai' | 'gemini' | 'grok';
 
 export interface ImageHistoryData {
   id: string;
@@ -23,9 +31,7 @@ export interface ImageHistoryData {
 
 export type ImageHistoryEntry = ImageHistoryData & (
   | { provider?: 'novelai'; parameters: ImageParameters; seed: number }
-  | { provider: 'openai'; parameters: OpenAIImageParameters; seed?: never }
-  | { provider: 'gemini'; parameters: Sized<GeminiImageParameters>; seed?: never }
-  | { provider: 'grok'; parameters: Sized<GrokImageParameters>; seed?: never }
+  | { provider: LegacyImageProvider; parameters: LegacyImageParameters; seed?: never }
 );
 
 /** Positive tags for display and manual character selection, not for recreating a request. */

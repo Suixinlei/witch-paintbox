@@ -27,7 +27,7 @@ export const importSectionTitles: Record<ImportSection, string> = {
   anchors: '标签锚定', sharedOutfits: '通用服装', worldbooks: '世界书', preferences: '生图设置与使用偏好',
 };
 const PROFILE_LIMIT = 200;
-const PARAMETER_FIELDS = ['parameters', 'openaiParameters', 'geminiParameters', 'grokParameters'] as const;
+const PARAMETER_FIELDS = ['parameters'] as const;
 
 export function importSections(archive: ParsedArchive): ImportSection[] {
   return archive.kind === 'all' ? ['api', 'parameters', 'artists', 'presets', 'anchors', 'sharedOutfits', 'worldbooks', 'preferences'] : [archive.kind];
@@ -166,7 +166,7 @@ function mergeAnchors(config: LocalConfig, incoming: CharacterAnchor[], mode: Im
 function mergeApi(config: LocalConfig, data: Extract<ParsedArchive, { kind: 'all' }>['data'], mode: ImportMode): string {
   const parts: string[] = [];
   for (const provider of IMAGE_PROVIDERS) {
-    const current = config.image.profiles[provider], incoming = data.image.profiles[provider], blank = defaultImageSettings(provider).connection;
+    const current = config.image.profiles[provider], incoming = data.image.profiles[provider], blank = defaultImageSettings().connection;
     if (same(incoming.connection, blank) && !incoming.connectionProfiles.length) continue;
     const fresh = same(current.connection, blank) && !current.connectionProfiles.length;
     const tally: Tally = { added: 0, replaced: 0, skipped: 0 };
@@ -178,12 +178,11 @@ function mergeApi(config: LocalConfig, data: Extract<ParsedArchive, { kind: 'all
     if (take) {
       current.connection = structuredClone(incoming.connection);
       current.activeConnectionId = ids.get(incoming.activeConnectionId) ?? '';
-      current.models = [...incoming.models];
     }
     parts.push(`${imageProviderName(provider)}：${take ? '当前连接改用文件' : '保留本地连接'}${incoming.connectionProfiles.length ? `，保存的连接${tallyText(tally, mode)}` : ''}`);
   }
   // The marker switches belong to the preset section.
-  const endpoint = ({ mode, url, key, model, models, maxTokens, temperature, transport, thinkingMode }: ModelSharedSettings) => ({ mode, url, key, model, models, maxTokens, temperature, transport, thinkingMode });
+  const endpoint = ({ mode, url, key, model, models, maxTokens, temperature, transport, thinkingMode, jsonOutput }: ModelSharedSettings) => ({ mode, url, key, model, models, maxTokens, temperature, transport, thinkingMode, jsonOutput });
   const api = config.model.api, next = data.model.api;
   const take = same(endpoint(api), endpoint(modelSharedSettings(defaultModelSettings())))
     || (mode === 'overwrite' && (next.mode === 'tavern' || Boolean(next.key)));
@@ -194,7 +193,7 @@ function mergeApi(config: LocalConfig, data: Extract<ParsedArchive, { kind: 'all
 
 function mergeParameters(config: LocalConfig, image: AllImageSettings, mode: ImportMode): string {
   return joined(IMAGE_PROVIDERS.map(provider => {
-    const current = config.image.profiles[provider], incoming = image.profiles[provider], blank = defaultImageSettings(provider);
+    const current = config.image.profiles[provider], incoming = image.profiles[provider], blank = defaultImageSettings();
     if (PARAMETER_FIELDS.every(field => same(incoming[field], blank[field]))) return null;
     const take = mode === 'overwrite' || PARAMETER_FIELDS.every(field => same(current[field], blank[field]));
     if (take) for (const field of PARAMETER_FIELDS) Object.assign(current, { [field]: structuredClone(incoming[field]) });

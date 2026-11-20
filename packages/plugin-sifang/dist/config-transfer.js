@@ -1,3 +1,4 @@
+import { isServiceEditor } from './service-client.js';
 import { archiveKeyCount, archiveUrlCount, exportArchive, MAX_ARCHIVE_BYTES, parseArchive, summarizeArchive } from './config-archive.js';
 import { applyArchive, defaultImportModes, importSections, importSectionTitles, loadLocalConfig, mergeArchive } from './config-merge.js';
 import { imageProviderName, loadImageSettings } from './image-settings.js';
@@ -6,10 +7,10 @@ function escape(value) {
 }
 const scopeTitles = { all: '全部配置', artists: '画师串', presets: '预设', worldbooks: '世界书' };
 const scopeDescriptions = {
-    all: '包含 NAI / GPT / Gemini / Grok 各通道生图 API、参数、画师串和预设，以及共用模型 API、标签锚定（含角色图）、通用服装、世界书、生图设置与使用偏好。',
+    all: '包含 NAI 生图 API、参数、画师串和预设，以及共用模型 API、标签锚定（含角色图）、通用服装、世界书、生图设置与使用偏好。',
     artists: '分享当前生图类型的命名画师配置、提示词及选用状态，文件会记录目标类型。',
     presets: '分享当前生图类型的预设名称、文本条目、编排顺序、功能层启用状态及共用标记开关。',
-    worldbooks: '包含完整世界书库、原文条目，以及 NAI / GPT 两套已保存的挂载选择。',
+    worldbooks: '包含完整世界书库、原文条目，以及已保存的挂载选择。',
 };
 const modeLabels = { skip: '跳过', overwrite: '覆盖' };
 export class ConfigTransfer {
@@ -116,7 +117,7 @@ export class ConfigTransfer {
         <div class="transfer-scope-options" role="group" aria-label="导出范围">${Object.keys(scopeTitles).map(kind => `<button type="button" data-transfer-kind="${kind}" aria-pressed="${this.kind === kind}"${busy ? ' disabled' : ''}>${scopeTitles[kind]}</button>`).join('')}</div>
         <p class="config-status">${scopeDescriptions[this.kind]}</p>
         ${this.kind === 'artists' || this.kind === 'presets' ? `<p class="config-status">本次导出：${imageProviderName(loadImageSettings().provider)}。</p>` : ''}
-        ${this.kind === 'all' ? `<label class="prompt-enable"><input type="checkbox" data-transfer-keys${this.includeKeys ? ' checked' : ''}${busy ? ' disabled' : ''}>包含 API 密钥和相应 URL</label><p class="config-status">勾选后，NAI / GPT 两套生图 API（含已保存连接）与共用模型 API 的密钥、URL 会以明文写入文件；未勾选时一并清空导出文件中的密钥和 URL。</p>` : ''}
+        ${this.kind === 'all' ? `<label class="prompt-enable"><input type="checkbox" data-transfer-keys${this.includeKeys ? ' checked' : ''}${busy ? ' disabled' : ''}>包含 API 密钥和相应 URL</label><p class="config-status">勾选后，NAI 生图 API（含已保存连接）与共用模型 API 的密钥、URL 会以明文写入文件；未勾选时一并清空导出文件中的密钥和 URL。</p>` : ''}
         <div class="transfer-actions"><button type="button" class="text-button" data-transfer-action="export"${busy ? ' disabled' : ''}>${this.phase === 'export' ? '正在整理…' : '导出 JSON'}</button></div>
         <p class="config-status">导出已保存的配置；请先保存其他页面的修改。已生成的图片历史不包含在配置文件内。</p>
       </section>
@@ -160,7 +161,7 @@ export class ConfigTransfer {
             const source = await file.text();
             if (request !== this.request)
                 return;
-            const archive = parseArchive(source);
+            const archive = parseArchive(source, isServiceEditor());
             const local = await loadLocalConfig(archive, this.context);
             if (request !== this.request)
                 return;
@@ -195,7 +196,7 @@ export class ConfigTransfer {
         this.error = false;
         this.render();
         try {
-            const blob = await exportArchive(kind, keys, this.context);
+            const blob = await exportArchive(kind, keys, this.context, isServiceEditor());
             if (request !== this.request)
                 return;
             const url = URL.createObjectURL(blob);

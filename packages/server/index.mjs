@@ -8,11 +8,7 @@ import { openServiceConfig, CONFIG_LIMIT } from './config.mjs';
 import { registerBuiltinLayers } from '@witch-paintbox/plugin-sifang/runtime/builtin-layers.js';
 import { modelSettingsForProvider } from '@witch-paintbox/plugin-sifang/runtime/model-settings.js';
 import { packet, PACKET_TYPE, SERVICE_VERSION } from '@witch-paintbox/plugin-sifang/runtime/service-protocol.js';
-import { defaultImageSettings, imageProviderName, validateImageSettings } from '@witch-paintbox/plugin-sifang/runtime/image-settings.js';
 import { setServiceRasterDecoder } from '@witch-paintbox/plugin-sifang/runtime/raster-image.js';
-import { fetchOpenAIImageModels } from '@witch-paintbox/plugin-sifang/runtime/openai-image.js';
-import { fetchGeminiImageModels } from '@witch-paintbox/plugin-sifang/runtime/gemini-image.js';
-import { fetchGrokImageModels } from '@witch-paintbox/plugin-sifang/runtime/grok-image.js';
 import { fetchServiceModelList } from '@witch-paintbox/plugin-sifang/runtime/model-api.js';
 import { MAX_IMAGE_BYTES } from '@witch-paintbox/plugin-sifang/runtime/image-bytes.js';
 import { withFault } from '@witch-paintbox/plugin-sifang/runtime/pet-events.js';
@@ -67,13 +63,13 @@ async function route(req, res, signal, isRisu) {
   }
   if (req.method === 'GET' && path === '/v1/admin/summary') {
     const current = config.snapshot();
-    const image = current?.image.profiles[current.image.activeProvider];
-    const model = current ? modelSettingsForProvider(current.model, current.image.activeProvider) : null;
+    const image = current?.image.profiles.novelai;
+    const model = current ? modelSettingsForProvider(current.model, 'novelai') : null;
     return sendJson(res, {
       address: `http://${host}:${server.address().port}`, directory, revision: config.revision(),
       queue: jobs.queueState(), history: library.count(),
-      image: image ? { provider: imageProviderName(image.provider), configured: Boolean(image.connection.key),
-        model: ({ novelai: image.parameters, openai: image.openaiParameters, gemini: image.geminiParameters, grok: image.grokParameters })[image.provider].model } : null,
+      image: image ? { provider: 'NAI', configured: Boolean(image.connection.key),
+        model: image.parameters.model } : null,
       model: model ? { name: model.mode === 'custom' ? model.model : env.PAINTBOX_MODEL_NAME || '',
         transport: model.transport, configured: model.mode === 'custom' ? Boolean(model.url) : Boolean(env.PAINTBOX_MODEL_URL),
         preset: model.presetName } : null,
@@ -84,15 +80,18 @@ async function route(req, res, signal, isRisu) {
   if (req.method === 'GET' && path === '/v1/admin/prompts') {
     const current = config.snapshot();
     if (!current) return sendJson(res, null);
-    const { activeProvider, profiles } = current.image;
-    const { positive, negative } = profiles[activeProvider];
-    const { head, tail, promptOrder, presetName } = modelSettingsForProvider(current.model, activeProvider);
+    const { positive, negative } = current.image.profiles.novelai;
+    const { head, tail, promptOrder, presetName } = modelSettingsForProvider(current.model, 'novelai');
     const prompts = new Map([...head, ...tail].filter(entry => !entry.marker).map(entry => [`prompt:${entry.id}`, entry]));
-    return sendJson(res, { provider: imageProviderName(activeProvider), positive, negative, preset: presetName,
+    return sendJson(res, { provider: 'NAI', positive, negative, preset: presetName,
       entries: promptOrder.flatMap(key => prompts.has(key) ? [prompts.get(key)] : []) });
   }
   if (req.method === 'GET' && path === '/v1/health') return sendJson(res, { version: SERVICE_VERSION, revision: config.revision() });
   if (req.method === 'GET' && path === '/v1/risu/preferences') return sendJson(res, risu.snapshot().preferences);
+  if (req.method === 'GET' && path === '/v1/admin/risu/artist-presets') {
+    const image = config.snapshot()?.image;
+    return sendJson(res, { novelai: (image?.profiles.novelai.artists ?? []).map(({ id, name }) => ({ id, name })) });
+  }
   if (req.method === 'GET' && path === '/v1/admin/risu') {
     const { revision, preferences, cards } = risu.snapshot();
     const sifang = library.categories().find(entry => entry.name.startsWith('四方世界')
@@ -160,15 +159,6 @@ async function route(req, res, signal, isRisu) {
     const data = await readJson(req);
     if (!text(data.url, 8192) || !text(data.key, 16384)) invalid();
     return sendJson(res, await fetchServiceModelList(data, signal));
-  }
-  if (path === '/v1/image-models') {
-    const input = await readJson(req);
-    if (!['openai', 'gemini', 'grok'].includes(input.provider)) invalid();
-    const { provider, connection, geminiParameters, grokParameters } = validateImageSettings({ ...defaultImageSettings(input.provider), ...input });
-    const models = provider === 'gemini' ? await fetchGeminiImageModels(connection, geminiParameters, signal)
-      : provider === 'grok' && grokParameters.protocol === 'xai' ? await fetchGrokImageModels(connection, signal)
-        : await fetchOpenAIImageModels(connection, signal);
-    return sendJson(res, models);
   }
   if (path === '/v1/images') {
     const data = await readJson(req);

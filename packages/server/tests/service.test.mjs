@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,7 +13,9 @@ import sharp from 'sharp';
 import { defaultAllImageSettings } from '@witch-paintbox/plugin-sifang/runtime/image-settings.js';
 import { defaultModelSettings, modelPresetSettings, validateAllModelSettings } from '@witch-paintbox/plugin-sifang/runtime/model-settings.js';
 import { defaultSettings } from '@witch-paintbox/plugin-sifang/runtime/settings.js';
+import { DRAW_INTERVAL_MS, fetchNovelAI } from '../request.mjs';
 import { requestServiceModel } from '@witch-paintbox/plugin-sifang/runtime/model-api.js';
+import { applyImageInsertions, createImageInsertionPlan } from '@witch-paintbox/plugin-sifang/runtime/image-insertion.js';
 import { parseImageMarkers } from '@witch-paintbox/plugin-sifang/runtime/image-markers.js';
 import { prepareImagePrompt } from '@witch-paintbox/plugin-sifang/runtime/image-prompt.js';
 import { PACKET_TYPE, packet, unpack } from '@witch-paintbox/plugin-sifang/runtime/service-protocol.js';
@@ -30,13 +32,15 @@ test('Risu planning output keeps environmental tags global and expands unambiguo
   assert.deepEqual(prepared.characters.map(character => character.positive), ['white hair, holding a lantern', 'black hair, walking']);
 });
 
-test('standalone service plans once, returns a binary image once and keeps history across restart', { timeout: 30_000 }, async () => {
+test('standalone service plans once, returns a binary image once and keeps history across restart', { timeout: 65000 }, async () => {
   const jpeg = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#aa5c72' } }).jpeg().toBuffer();
   const calls = [];
   let plansTwo = false;
   let emptyPlan = false;
   let secondPrompt = 'broken result';
   let activeDraws = 0;
+  let finishedDrawAt;
+  const drawIntervals = [];
   let peakDraws = 0;
   let onActiveCancelFixture;
   const upstream = createServer(async (req, res) => {
@@ -52,13 +56,15 @@ test('standalone service plans once, returns a binary image once and keeps histo
       if (plansTwo) rows.push({ at: points[1] ?? points[0], summary: '第二张配图', prompt: secondPrompt });
       output = { choices: [{ message: { content: JSON.stringify(emptyPlan ? [] : rows) } }] };
     } else {
+      if (finishedDrawAt !== undefined) drawIntervals.push(performance.now() - finishedDrawAt);
       peakDraws = Math.max(peakDraws, ++activeDraws);
       try {
-        if (body.prompt === 'cancelled caller') onActiveCancelFixture?.();
+        if (body.input === 'cancelled caller') onActiveCancelFixture?.();
         await wait(75);
-        if (body.prompt === 'broken result') { res.writeHead(429).end(); return; }
-        output = { data: [{ b64_json: jpeg.toString('base64') }] };
-      } finally { activeDraws--; }
+        if (body.input === 'broken result') { res.writeHead(429).end(); return; }
+        res.writeHead(200, { 'Content-Type': 'image/jpeg' }).end(jpeg);
+        return;
+      } finally { activeDraws--; finishedDrawAt = performance.now(); }
     }
     res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(output));
   });
@@ -113,12 +119,13 @@ test('standalone service plans once, returns a binary image once and keeps histo
 
     const imageSettings = defaultAllImageSettings();
     imageSettings.activeProvider = 'openai';
-    const settings = imageSettings.profiles.openai;
+    const settings = imageSettings.profiles.novelai;
+    // Legacy GPT profile with a stale key; the service must drop the whole channel on import.
+    imageSettings.profiles.openai = { ...settings, provider: 'openai', connection: { channel: 'official', url: '', key: 'legacy-image-secret', appendSuffix: true } };
     settings.connection = { channel: 'custom', url: remote, key: 'fixture-image-key', appendSuffix: true };
-    settings.openaiParameters.model = 'fixture-image';
     const model = validateAllModelSettings(defaultModelSettings());
     model.api.transport = 'nonstream';
-    const preset = defaultModelSettings('openai');
+    const preset = defaultModelSettings('novelai');
     preset.head = [{ id: 'fixture', name: 'fixture', role: 'system', enabled: true, content: 'Choose a marked location.' }];
     preset.tail = [
       { id: 'fixture-tail', name: 'fixture-tail', role: 'system', enabled: true, content: 'Return only the requested JSON. {{getvar::生图数量要求}}' },
@@ -127,7 +134,7 @@ test('standalone service plans once, returns a binary image once and keeps histo
     preset.promptOrder = ['prompt:fixture', 'layer:worldbook', 'input', 'layer:anchors', 'prompt:fixture-tail', 'prompt:fixture-quantity'];
     preset.enabledLayers = ['anchors', 'worldbook'];
     preset.worldbooks = [{ name: 'Global artwork', entries: ['courtyard', 'ocean'] }];
-    model.presets.openai = modelPresetSettings(preset);
+    model.presets.novelai = modelPresetSettings(preset);
     const worldbooks = [{ name: 'Global artwork', entries: [
       { id: 'courtyard', name: 'Courtyard', content: 'GLOBAL_COURTYARD_LIGHTING', enabled: true,
         activation: { constant: false, keys: ['庭院'], secondaryKeys: [], selective: false, selectiveLogic: 0, caseSensitive: false, matchWholeWords: false } },
@@ -151,10 +158,20 @@ test('standalone service plans once, returns a binary image once and keeps histo
     assert.equal(updated.status, 200, updated.ok ? '' : await updated.text());
     const { revision } = await updated.json();
     assert.notEqual(revision, first);
-    assert.deepEqual((await unpack(await (await send('config')).blob())).value.revision, revision);
+    const downloaded = await unpack(await (await send('config')).blob());
+    assert.equal(downloaded.value.revision, revision);
+    assert.doesNotMatch(await downloaded.blobs[0].text(), /legacy-image-secret/);
+    const stored = await unpack(new Blob([await readFile(join(root, 'settings.wp'))], { type: PACKET_TYPE }));
+    const savedSource = await stored.blobs[0].text();
+    const savedArchive = JSON.parse(savedSource);
+    assert.equal(savedArchive.data.image.activeProvider, 'novelai');
+    assert.deepEqual(Object.keys(savedArchive.data.image.profiles), ['novelai']);
+    assert.deepEqual(Object.keys(savedArchive.data.model.presets), ['novelai']);
+    assert.doesNotMatch(savedSource, /legacy-image-secret/);
+    assert.equal((await send('image-models', { provider: 'openai' })).status, 404);
     const prompts = await (await send('admin/prompts')).json();
     assert.deepEqual(prompts.entries, [...preset.head, ...preset.tail]);
-    assert.equal(prompts.provider, 'GPT');
+    assert.equal(prompts.provider, 'NAI');
     assert.doesNotMatch(JSON.stringify(prompts), /fixture-(image|model)-key/);
     assert.equal((await send('admin/prompts', undefined, { Authorization: `Bearer ${risuToken}` })).status, 403);
 
@@ -181,17 +198,25 @@ test('standalone service plans once, returns a binary image once and keeps histo
     const image = await unpack(await response.blob());
     assert.equal(image.value.history.id, 'finished');
     assert.equal(image.value.history.error, undefined);
-    assert.equal(image.value.parameters.width, 64);
+    assert.equal(image.value.parameters.width, settings.parameters.width);
     assert.equal(image.blobs[0].type, 'image/jpeg');
     assert.deepEqual(Buffer.from(await image.blobs[0].arrayBuffer()), jpeg);
-    assert.deepEqual(calls.map(call => call.url), ['/v1/chat/completions', '/v1/images/generations']);
-    assert.equal(calls[1].body.prompt, 'blue coat, moonlit courtyard');
+    assert.deepEqual(calls.map(call => call.url), ['/v1/chat/completions', '/v1/ai/generate-image']);
+    assert.equal(calls[1].body.input, 'blue coat, moonlit courtyard');
     assert.equal(calls[1].key, 'Bearer fixture-image-key');
 
     plansTwo = true;
-    const combined = await send('plan', {
+    const combining = send('plan', {
       original, excludedTags: [], draw: { scope: 'scope', chatId: 'chat', historyId: 'batch-floor', sourceName: '测试', delay: 0 },
     });
+    let queuedTogether = false;
+    for (let poll = 0; poll < 30 && !queuedTogether; poll++) {
+      const { draw } = await (await send('admin/status')).json();
+      queuedTogether = draw.active === 1 && draw.queued === 1;
+      if (!queuedTogether) await wait(25);
+    }
+    assert.ok(queuedTogether, 'each planned picture immediately has its own queue position');
+    const combined = await combining;
     assert.equal(combined.status, 200);
     const batch = await unpack(await combined.blob());
     assert.equal(batch.value.added.length, 2);
@@ -258,12 +283,29 @@ test('standalone service plans once, returns a binary image once and keeps histo
     await send('history/delete', { id: 'finished' });
     assert.deepEqual((await unpack(await (await send('history/marker', { markerKey })).blob())).value.entries, []);
     assert.equal(calls.length, 16);
+    assert.ok(drawIntervals.every(ms => ms >= DRAW_INTERVAL_MS - 40), 'all image starts follow the cooldown');
+    finishedDrawAt = undefined;
+
+    settings.positive = 'global brushwork';
+    settings.artists = [
+      { id: 'ink', name: '水墨', positive: 'black ink wash', negative: '' },
+      { id: 'oil', name: '油画', positive: 'thick oil paint', negative: '' },
+    ];
+    const styled = await send('config', config(revision));
+    assert.equal(styled.status, 200);
+    const stylesRevision = (await styled.json()).revision;
+    const catalog = await (await send('admin/risu/artist-presets')).json();
+    assert.deepEqual(catalog.novelai, [{ id: 'ink', name: '水墨' }, { id: 'oil', name: '油画' }]);
+    assert.equal((await send('admin/risu/artist-presets', undefined, risu)).status, 403);
 
     const initial = await (await send('admin/risu')).json();
     const records = ['amber cloak', 'jade cloak'].map((appearance, index) => ({
       card: { chaId: `card-${index}`, name: '同名角色卡', desc: `Card context ${index}` },
       library: { people: [{ id: 'same-person', name: '角色', appearance }], backgrounds: [] },
     }));
+    records[0].artistPresetIds = { novelai: 'ink' };
+    assert.equal((await send('admin/risu/cards', { revision: initial.revision,
+      cards: [{ ...records[0], artistPresetIds: { unknown: 'ink' } }] })).status, 400);
     const saved = await send('admin/risu/cards', { revision: initial.revision, cards: records });
     assert.equal(saved.status, 200);
     const preferences = { ...initial.preferences, enabled: true, maxIllustrations: 1 };
@@ -279,6 +321,9 @@ test('standalone service plans once, returns a binary image once and keeps histo
       const response = await send('plan', request(record.card.chaId), risu);
       assert.equal(response.status, 200);
       assert.equal((await unpack(await response.blob())).blobs.length, 1);
+      const { appearance } = record.library.people[0];
+      assert.equal(calls[start + 1].body.input,
+        `${index === 0 ? 'black ink wash' : 'global brushwork'}, ${appearance}, moonlit courtyard`);
       const context = calls[start].body.messages.map(message => message.content).join('\n');
       assert.ok(context.includes(record.library.people[0].appearance));
       assert.ok(context.includes(record.card.desc));
@@ -310,13 +355,24 @@ test('standalone service plans once, returns a binary image once and keeps histo
     const cardDraft = await (await send('admin/risu/card', { id: 'card-1', withRevision: true })).json();
     assert.deepEqual(cardDraft.entry, records[1]);
     assert.equal(cardDraft.revision, (await (await send('admin/risu')).json()).revision);
-    const changedCard = { ...cardDraft.entry, card: { ...cardDraft.entry.card, scenario: 'Only this card changes.' } };
+    const changedCard = { ...cardDraft.entry, card: { ...cardDraft.entry.card, scenario: 'Only this card changes.' },
+      artistPresetIds: { novelai: 'oil' } };
     assert.equal((await send('admin/risu/cards', { revision: cardDraft.revision, cards: [changedCard] })).status, 200);
     assert.equal((await send('admin/risu/cards', { revision: cardDraft.revision, cards: [cardDraft.entry] })).status, 409);
     assert.deepEqual(await (await send('admin/risu/card', { id: 'card-1' })).json(), changedCard);
     assert.deepEqual(await (await send('admin/risu/card', { id: 'card-0' })).json(), records[0]);
     assert.deepEqual(await (await send('risu/preferences', undefined, risu)).json(), preferences);
-    assert.equal((await (await send('health')).json()).revision, revision);
+    const drawCard = (id, drawId) => send('images', { input: { scene: 'moonlit courtyard' },
+      history: { id: drawId, markerKey: JSON.stringify([`risu:${id}`, 'chat', drawId]), title: '庭院' } }, risu);
+    assert.equal((await drawCard('card-1', 'oil-draw')).status, 200);
+    assert.equal(calls.at(-1).body.input, 'thick oil paint, moonlit courtyard');
+
+    settings.artists = [{ ...settings.artists[0], positive: 'updated ink wash' }];
+    assert.equal((await send('config', config(stylesRevision))).status, 200);
+    assert.equal((await drawCard('card-0', 'updated-ink-draw')).status, 200);
+    assert.equal(calls.at(-1).body.input, 'updated ink wash, moonlit courtyard');
+    assert.equal((await drawCard('card-1', 'deleted-oil-draw')).status, 200);
+    assert.equal(calls.at(-1).body.input, 'global brushwork, moonlit courtyard');
   } finally {
     await stop();
     await new Promise(resolve => upstream.close(resolve));
@@ -346,4 +402,55 @@ test('DeepSeek thinking control is explicit and limited to the official service 
   assert.deepEqual(requests.map(request => [request.thinking, request.reasoning_effort]), [
     [undefined, undefined], [{ type: 'disabled' }, undefined], [{ type: 'enabled' }, 'low'], [undefined, undefined],
   ]);
+});
+
+test('DeepSeek JSON output requests an object and preserves insertion validation', async t => {
+  const plan = createImageInsertionPlan('信使走上石桥。\n\n薄雾浮在河面。');
+  const rows = [{ at: plan.points[0].id, summary: '石桥', prompt: 'a stone bridge in the fog' }];
+  const wrapped = JSON.stringify({ images: rows });
+  let request;
+  t.mock.method(globalThis, 'fetch', async (_url, { body }) => {
+    request = JSON.parse(body);
+    return Response.json({ choices: [{ message: { content: wrapped } }] });
+  });
+  const settings = { ...defaultModelSettings(), mode: 'custom', url: 'https://api.deepseek.com', model: 'deepseek-flash',
+    transport: 'nonstream', jsonOutput: true };
+  const signal = new AbortController().signal;
+  const messages = [{ role: 'system', content: 'Return an array of illustrations.' }];
+  const answer = await requestServiceModel(settings, messages, signal);
+  assert.deepEqual(request.response_format, { type: 'json_object' });
+  assert.equal(request.stream, false);
+  assert.match(request.messages.at(-1).content, /JSON 对象.*images/);
+  assert.equal(validateAllModelSettings(settings).api.jsonOutput, true);
+  assert.deepEqual(applyImageInsertions(plan, answer), applyImageInsertions(plan, JSON.stringify(rows)));
+  assert.throws(() => applyImageInsertions(plan, JSON.stringify({ images: rows, text: '改写' })), /images/);
+  assert.throws(() => applyImageInsertions(plan, '{"images":{} }'), /images/);
+  await requestServiceModel({ ...settings, url: 'https://compatible.example.test' }, messages, signal);
+  assert.equal(request.response_format, undefined);
+  assert.deepEqual(request.messages, messages);
+  await requestServiceModel({ ...settings, transport: 'toolcall' }, messages, signal);
+  assert.equal(request.response_format, undefined);
+});
+
+test('NovelAI retries a failed TLS handshake with the same payload and never repeats an ambiguous reset', async t => {
+  const times = [];
+  const payload = '{"input":"scene"}';
+  const preTls = new TypeError('fetch failed', {
+    cause: Object.assign(new Error('Client network socket disconnected before secure TLS connection was established'), { code: 'ECONNRESET' }),
+  });
+  const ambiguous = new TypeError('fetch failed', { cause: Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }) });
+  let failures = [preTls, preTls];
+  t.mock.method(globalThis, 'fetch', async (_url, options) => {
+    assert.equal(options.body, payload);
+    times.push(performance.now());
+    if (failures.length) throw failures.shift();
+    return new Response();
+  });
+  const options = { body: payload, signal: new AbortController().signal };
+  assert.equal((await fetchNovelAI('https://image.example.invalid', options)).status, 200);
+  assert.equal(times.length, 3);
+  assert.ok(times.slice(1).every((time, index) => time - times[index] >= DRAW_INTERVAL_MS - 20));
+  failures = [ambiguous];
+  await assert.rejects(fetchNovelAI('https://image.example.invalid', options), error => error === ambiguous);
+  assert.equal(times.length, 4);
 });

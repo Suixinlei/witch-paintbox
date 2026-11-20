@@ -4,7 +4,6 @@ import { loadAnchors, validateAnchorLibrary, ANCHOR_PORTRAIT_LIMIT } from './anc
 import { loadSharedOutfits, validateSharedOutfits } from './shared-outfit-store.js';
 import { loadWorldbookArchive, validateWorldbookArchive } from './worldbook-source.js';
 import { defaultSettings, readPetPlacement, readPetScale, readSettings, isPaintboxTheme, readAutoImageDelay, readImageConcurrency, readExcludedTags } from './settings.js';
-import { openAIImageComplexityLabel, supportsOpenAIImageComplexity } from './openai-image.js';
 import { isPageId } from './pages.js';
 export const MAX_ARCHIVE_BYTES = 128 * 1024 * 1024;
 function object(value, label) {
@@ -89,24 +88,24 @@ function preferences(value) {
 }
 const providerName = (provider) => imageProviderName(provider);
 function imageProvider(value) {
-    if (!IMAGE_PROVIDERS.includes(value))
-        throw new Error('配置文件的生图类型无效。');
-    return value;
+    if (value !== 'novelai')
+        throw new Error('配置文件来自已移除的 GPT / Gemini / Grok 通道，仅支持 NAI 配置。');
+    return 'novelai';
 }
-function artistSettings(value, provider) {
+function artistSettings(value) {
     const source = object(value, '画师串');
     fields(source, ['artists', 'positive', 'negative', 'activeArtistId'], '画师串');
-    const validated = validateImageSettings({ ...defaultImageSettings(provider), ...source });
+    const validated = validateImageSettings({ ...defaultImageSettings(), ...source });
     return { artists: validated.artists, positive: validated.positive, negative: validated.negative, activeArtistId: validated.activeArtistId };
 }
 function selectPreset(settings) {
     const { presetName, head, tail, promptOrder, enabledLayers, parseImageMarkers, hideImageContext } = settings;
     return { presetName, head, tail, promptOrder, enabledLayers, parseImageMarkers, hideImageContext };
 }
-function presetSettings(value, provider) {
+function presetSettings(value) {
     const source = object(value, '预设');
     fields(source, ['presetName', 'head', 'tail', 'promptOrder', 'enabledLayers', 'parseImageMarkers', 'hideImageContext'], '预设');
-    return selectPreset(validateModelSettings({ ...defaultModelSettings(provider), ...source }));
+    return selectPreset(validateModelSettings({ ...defaultModelSettings(), ...source }));
 }
 export function modelAttachments(model) {
     return Object.fromEntries(IMAGE_PROVIDERS.map(provider => [provider, model.presets[provider].worldbooks]));
@@ -119,15 +118,16 @@ function worldbookSettings(value, version) {
     if (version === 1) {
         if (!Array.isArray(source.attachments))
             throw new Error('旧版世界书挂载必须是数组。');
-        raw = { novelai: source.attachments, openai: [] };
+        raw = { novelai: source.attachments };
     }
     else {
         raw = object(source.attachments, '世界书挂载');
-        fields(raw, [...IMAGE_PROVIDERS], '世界书挂载');
+        if (!Object.hasOwn(raw, 'novelai'))
+            throw new Error('世界书挂载缺少 NAI 条目。');
+        // Mount sets from removed channels are ignored; only the NAI set is imported.
     }
-    // Files from before Gemini / Grok carry only two mount sets; the new channels start empty.
     const attachments = Object.fromEntries(IMAGE_PROVIDERS.map(provider => [provider,
-        validateModelSettings({ ...defaultModelSettings(provider), worldbooks: raw[provider] ?? [] }).worldbooks]));
+        validateModelSettings({ ...defaultModelSettings(), worldbooks: raw[provider] ?? [] }).worldbooks]));
     checkWorldbookLinks(attachments, worldbooks);
     return { worldbooks, attachments };
 }
@@ -201,7 +201,36 @@ export function archiveKeyCount(archive) {
 export function archiveUrlCount(archive) {
     return archiveConnections(archive).filter(connection => connection.url.trim()).length;
 }
-export function parseArchive(source) {
+/** Project a portable archive onto the service's NovelAI configuration. */
+export function retainNovelAI(archive) {
+    const raw = object(archive, '配置文件');
+    if (raw.version !== 2)
+        return;
+    const data = object(raw.data, '配置内容');
+    if (raw.kind === 'artists' || raw.kind === 'presets') {
+        if (data.provider !== 'novelai')
+            throw new Error('独立服务仅接受 NAI 的画师串和预设。');
+        return;
+    }
+    if (raw.kind === 'worldbooks') {
+        const attachments = object(data.attachments, '世界书挂载');
+        data.attachments = { novelai: attachments.novelai ?? [] };
+        return;
+    }
+    if (raw.kind !== 'all')
+        return;
+    const image = object(data.image, '生图配置');
+    const model = object(data.model, '模型配置');
+    const profile = { ...object(object(image.profiles, '生图配置').novelai, 'NAI 配置') };
+    delete profile.openaiParameters;
+    delete profile.geminiParameters;
+    delete profile.grokParameters;
+    delete profile.models;
+    image.activeProvider = 'novelai';
+    image.profiles = { novelai: profile };
+    model.presets = { novelai: object(model.presets, '模型预设').novelai };
+}
+export function parseArchive(source, novelAIOnly = false) {
     if (source.length > MAX_ARCHIVE_BYTES || new TextEncoder().encode(source).byteLength > MAX_ARCHIVE_BYTES)
         throw new Error('配置文件不能超过 128 MiB。');
     let decoded;
@@ -223,6 +252,8 @@ export function parseArchive(source) {
     }
     const base = { format: 'witch-paintbox-config', version: raw.version, kind: raw.kind,
         exportedAt: raw.exportedAt, includesKeys: raw.includesKeys };
+    if (novelAIOnly)
+        retainNovelAI(raw);
     const data = object(raw.data, '配置内容');
     let result;
     if (raw.kind !== 'all' && raw.includesKeys)
@@ -230,12 +261,12 @@ export function parseArchive(source) {
     if (raw.kind === 'artists') {
         fields(data, raw.version === 1 ? ['artists'] : ['provider', 'artists'], '画师串分享文件');
         const provider = raw.version === 1 ? 'novelai' : imageProvider(data.provider);
-        result = { ...base, kind: 'artists', data: { provider, artists: artistSettings(data.artists, provider) } };
+        result = { ...base, kind: 'artists', data: { provider, artists: artistSettings(data.artists) } };
     }
     else if (raw.kind === 'presets') {
         fields(data, raw.version === 1 ? ['presets'] : ['provider', 'presets'], '预设分享文件');
         const provider = raw.version === 1 ? 'novelai' : imageProvider(data.provider);
-        result = { ...base, kind: 'presets', data: { provider, presets: presetSettings(data.presets, provider) } };
+        result = { ...base, kind: 'presets', data: { provider, presets: presetSettings(data.presets) } };
     }
     else if (raw.kind === 'worldbooks') {
         result = { ...base, kind: 'worldbooks', data: worldbookSettings(data, raw.version) };
@@ -258,9 +289,6 @@ export function parseArchive(source) {
             }
             const presets = object(modelRaw.presets, '模型预设');
             for (const provider of IMAGE_PROVIDERS) {
-                // Gemini / Grok presets are absent in files exported before those channels existed.
-                if (presets[provider] === undefined && (provider === 'gemini' || provider === 'grok'))
-                    continue;
                 if (object(presets[provider], `${providerName(provider)} 预设`).worldbookSource !== 'uploads') {
                     throw new Error(`${providerName(provider)} 预设的世界书来源不受支持。`);
                 }
@@ -277,12 +305,12 @@ export function parseArchive(source) {
         throw new Error('文件标记为不含密钥，但实际包含密钥，已停止导入。');
     return result;
 }
-export async function exportArchive(kind, includeKeys, context) {
+export async function exportArchive(kind, includeKeys, context, novelAIOnly = false) {
     const envelope = { format: 'witch-paintbox-config', version: 2, kind, exportedAt: new Date().toISOString(), includesKeys: kind === 'all' && includeKeys };
     let data;
     if (kind === 'artists') {
         const image = loadImageSettings();
-        data = { provider: image.provider, artists: artistSettings({ artists: image.artists, positive: image.positive, negative: image.negative, activeArtistId: image.activeArtistId }, image.provider) };
+        data = { provider: image.provider, artists: artistSettings({ artists: image.artists, positive: image.positive, negative: image.negative, activeArtistId: image.activeArtistId }) };
     }
     else if (kind === 'presets') {
         const model = loadModelSettings();
@@ -314,7 +342,10 @@ export async function exportArchive(kind, includeKeys, context) {
             portable.push({ ...character, portrait: await encodePortrait(character.portrait) });
         data = { image, model, preferences: readSettings(context), anchors: portable, sharedOutfits: loadSharedOutfits(), worldbooks };
     }
-    const blob = new Blob([JSON.stringify({ ...envelope, data }, null, 2)], { type: 'application/json' });
+    const archive = { ...envelope, data };
+    if (novelAIOnly)
+        retainNovelAI(archive);
+    const blob = new Blob([JSON.stringify(archive, null, 2)], { type: 'application/json' });
     if (blob.size > MAX_ARCHIVE_BYTES)
         throw new Error('配置文件超过 128 MiB，请先减少角色图或世界书体积。');
     return blob;
@@ -323,9 +354,9 @@ export function summarizeArchive(archive) {
     const rows = [];
     if (archive.version === 1)
         rows.push({ title: '旧版配置兼容', detail: archive.kind === 'all'
-                ? '旧版单套配置归入 NAI；文件中其他通道为空，不会改动本地对应配置。'
+                ? '旧版单套配置归入 NAI。'
                 : archive.kind === 'worldbooks' ? '旧版世界书挂载归入 NAI。'
-                    : '旧版分享文件的目标为 NAI，不会替换 GPT 的画师串或预设。' });
+                    : '旧版分享文件的目标为 NAI。' });
     if (archive.kind === 'artists') {
         const artists = archive.data.artists;
         rows.push({ title: `${providerName(archive.data.provider)} 画师串`, detail: `${artists.artists.length} 个命名配置及当前提示词、选用状态。${artists.artists.map(item => item.name).join('、')}` });
@@ -347,15 +378,9 @@ export function summarizeArchive(archive) {
     rows.push({ title: '当前生图类型', detail: providerName(image.activeProvider) });
     for (const provider of IMAGE_PROVIDERS) {
         const settings = image.profiles[provider], preset = model.presets[provider];
-        const canvas = provider === 'novelai' ? `${settings.parameters.width} × ${settings.parameters.height}`
-            : provider === 'openai' ? `${settings.openaiParameters.width} × ${settings.openaiParameters.height}`
-                : provider === 'gemini' ? `${settings.geminiParameters.aspectRatio} · ${settings.geminiParameters.imageSize}`
-                    : `${settings.grokParameters.aspectRatio} · ${settings.grokParameters.resolution.toUpperCase()}`;
-        const modelLabel = provider === 'novelai' ? settings.parameters.model : provider === 'openai' ? settings.openaiParameters.model
-            : provider === 'gemini' ? settings.geminiParameters.model : settings.grokParameters.model;
-        const planning = provider === 'openai' && supportsOpenAIImageComplexity(modelLabel)
-            ? `，规划深度 ${openAIImageComplexityLabel(settings.openaiParameters.complexity)}` : '';
-        rows.push({ title: `${providerName(provider)} 生图 API`, detail: `${settings.connectionProfiles.length} 个保存连接；模型 ${modelLabel || '未选模型'}，${canvas}${planning}，含全部生图参数。` }, { title: `${providerName(provider)} 画师串`, detail: `${settings.artists.length} 个命名配置及当前提示词。${settings.artists.map(item => item.name).join('、')}` }, { title: `${providerName(provider)} 预设`, detail: `“${preset.presetName || '未命名'}”，${preset.head.length + preset.tail.length} 个文本条目，含编排、功能层选择和 ${preset.worldbooks.length} 本世界书挂载。` });
+        const canvas = `${settings.parameters.width} × ${settings.parameters.height}`;
+        const modelLabel = settings.parameters.model;
+        rows.push({ title: `${providerName(provider)} 生图 API`, detail: `${settings.connectionProfiles.length} 个保存连接；模型 ${modelLabel || '未选模型'}，${canvas}，含全部生图参数。` }, { title: `${providerName(provider)} 画师串`, detail: `${settings.artists.length} 个命名配置及当前提示词。${settings.artists.map(item => item.name).join('、')}` }, { title: `${providerName(provider)} 预设`, detail: `“${preset.presetName || '未命名'}”，${preset.head.length + preset.tail.length} 个文本条目，含编排、功能层选择和 ${preset.worldbooks.length} 本世界书挂载。` });
     }
     rows.push({ title: '共用模型 API', detail: `${model.api.mode === 'tavern' ? '跟随酒馆主 API' : `自定义接口 · ${model.api.model || '未选模型'}`}；含回复参数及配图标记开关。` }, { title: '标签锚定', detail: `${anchors.length} 个角色、${anchors.reduce((total, anchor) => total + anchor.aliases.length, 0)} 个别名、${anchors.reduce((total, anchor) => total + anchor.outfits.length, 0)} 套服装、${anchors.filter(anchor => anchor.portrait).length} 张角色图。` }, { title: '通用服装库', detail: `${sharedOutfits.length} 套通用服装。${sharedOutfits.map(outfit => outfit.name).join('、')}` }, { title: '世界书', detail: `${worldbooks.length} 本、${worldbooks.reduce((total, book) => total + book.entries.length, 0)} 个条目，含各通道挂载关系。${worldbooks.map(book => book.name).join('、')}` }, { title: '生图设置与使用偏好', detail: `含生图设置、页面记忆与悬浮球位置。最大同时生图数：${archive.data.preferences.imageConcurrency} 张。回复后自动写 Tag：${archive.data.preferences.autoProcessReplies ? '开启' : '关闭'}；新标记自动出图：${archive.data.preferences.autoGenerateImages ? '开启' : '关闭'}（仅限最新一楼，间隔 ${archive.data.preferences.autoImageDelay} 秒）；自动清理：${archive.data.preferences.imageRetentionDays ? `保留 ${archive.data.preferences.imageRetentionDays} 天，采用文件偏好后会清理本机过期图片` : '关闭'}。` });
     return rows;

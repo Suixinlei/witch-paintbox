@@ -47,7 +47,7 @@ function requireContext(): TavernContext {
 }
 
 async function encodeConfig(expected: string | null): Promise<Blob> {
-  const [archive, state] = await Promise.all([exportArchive('all', true, requireContext()), loadVibes()]);
+  const [archive, state] = await Promise.all([exportArchive('all', true, requireContext(), true), loadVibes()]);
   const blobs = [archive.slice(0, archive.size, '')];
   const add = (blob: Blob | null) => blob ? blobs.push(blob) - 1 : null;
   const vibes = state.items.map(({ image, thumbnail, ...item }) => ({ ...item, imageIndex: add(image), thumbnailIndex: add(thumbnail) }));
@@ -109,7 +109,7 @@ export async function pullServiceConfig(signal: AbortSignal): Promise<void> {
     const response = await sendService('config', null, signal, connection);
     const { value, blobs } = await unpack<ServiceConfigManifest>(await response.blob());
     if (!value.revision || !blobs[0]) throw new Error('服务配置格式无效。');
-    const archive = parseArchive(await blobs[0].text());
+    const archive = parseArchive(await blobs[0].text(), true);
     if (archive.kind !== 'all') throw new Error('服务配置格式无效。');
     const vibes = value.vibes.map(({ imageIndex, thumbnailIndex, ...item }) => ({
       ...item, image: imageIndex === null ? null : blobs[imageIndex], thumbnail: thumbnailIndex === null ? null : blobs[thumbnailIndex],

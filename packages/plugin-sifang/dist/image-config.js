@@ -1,12 +1,9 @@
 import { isServiceEditor } from './service-client.js';
 import { flushServiceConfig } from './service-config.js';
 import { isSifangEnvironment } from './sifang-host.js';
-import { loadImageSettings, saveImageSettings, switchImageProvider } from './image-settings.js';
-import { aspectParameters, imageSettingsView, OPENAI_SIZE_PRESETS } from './image-view.js';
+import { loadImageSettings, saveImageSettings } from './image-settings.js';
+import { imageSettingsView } from './image-view.js';
 import { NAI_SIZE_PRESETS, validateImageConnection } from './novelai.js';
-import { fetchOpenAIImageModels, validateOpenAIImageConnection, OPENAI_IMAGE_26_MODELS, supportsOpenAIImageComplexity, openAIImageComplexityHint } from './openai-image.js';
-import { fetchGeminiImageModels } from './gemini-image.js';
-import { fetchGrokImageModels, validateGrokConnection } from './grok-image.js';
 import { VibePanel } from './vibe-panel.js';
 import { generateConfiguredImage } from './image-provider.js';
 import { imageFileExtension } from './raster-image.js';
@@ -16,25 +13,11 @@ import { createImageGallery } from './image-gallery.js';
 import { emitPetEvent, petEnd, petFault, petTaskId } from './pet-events.js';
 import { isImageSizeModeSaving, loadModelSettings, saveImageSizeMode } from './model-settings.js';
 import { imageSizeMode } from './image-size-mode.js';
-/** Check one draft connection the same way the matching provider will send it. */
-function validateConnectionFor(settings, connection) {
-    if (settings.provider === 'novelai')
-        return validateImageConnection(connection);
-    if (settings.provider === 'grok')
-        return validateGrokConnection(connection);
-    if (settings.provider === 'gemini') {
-        if (connection.channel === 'custom' || settings.geminiParameters.protocol === 'openai')
-            return validateOpenAIImageConnection(connection);
-        const key = connection.key.trim().replace(/^Bearer\s+/i, '');
-        if (!key || /[^\x21-\x7e]/.test(key))
-            throw new Error('请填写有效的 API 密钥。');
-        return { channel: 'official', url: '', key, appendSuffix: connection.appendSuffix };
-    }
-    return validateOpenAIImageConnection(connection);
+/** Check one draft connection the same way NovelAI will send it. */
+function validateConnectionFor(connection) {
+    return validateImageConnection(connection);
 }
-const OFFICIAL_NAMES = {
-    novelai: 'NovelAI 官方', openai: 'OpenAI 官方', gemini: 'Google 官方', grok: 'xAI 官方',
-};
+const OFFICIAL_NAME = 'NovelAI 官方';
 function newId() {
     return `${Date.now().toString(36)}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
 }
@@ -48,9 +31,6 @@ export class ImageConfig {
     container = null;
     listeners = null;
     request = null;
-    modelRequest = null;
-    modelOptions = [];
-    moreProviders = false;
     advancedOpen = isServiceEditor();
     vibePanel = null;
     imageUrl = '';
@@ -77,28 +57,20 @@ export class ImageConfig {
         this.reloadSaved();
     }
     reloadSaved(artistsOnly = false) {
-        this.cancelModelRefresh();
         if (artistsOnly && this.settings) {
-            const saved = loadImageSettings(this.settings.provider);
+            const saved = loadImageSettings();
             this.settings = { ...this.settings, artists: saved.artists, positive: saved.positive, negative: saved.negative, activeArtistId: saved.activeArtistId };
             this.artistName = saved.artists.find(item => item.id === saved.activeArtistId)?.name ?? '';
             this.render();
             return;
         }
-        const previousProvider = this.settings?.provider;
         this.settings = null;
         this.loadError = '';
         this.connection = { channel: 'official', url: '', key: '', appendSuffix: true };
-        this.modelOptions = [];
         this.connectionId = this.connectionName = this.artistName = '';
         try {
             this.settings = loadImageSettings();
-            if (previousProvider && previousProvider !== this.settings.provider) {
-                this.request?.abort();
-                this.clearOutput();
-            }
             this.connection = { ...this.settings.connection };
-            this.modelOptions = [...this.settings.models];
             this.connectionId = this.settings.activeConnectionId;
             this.connectionName = this.settings.connectionProfiles.find(item => item.id === this.connectionId)?.name ?? '';
             this.artistName = this.settings.artists.find(item => item.id === this.settings.activeArtistId)?.name ?? '';
@@ -122,7 +94,6 @@ export class ImageConfig {
     }
     unmount() {
         this.maskKey();
-        this.cancelModelRefresh();
         this.listeners?.abort();
         this.previewGallery?.element.remove();
         this.previewGallery = null;
@@ -162,10 +133,9 @@ export class ImageConfig {
             this.container.replaceChildren(message);
             return;
         }
-        this.container.innerHTML = imageSettingsView({ ...this.settings, connection: this.connection, activeConnectionId: this.connectionId, models: this.modelOptions }, { connectionName: this.connectionName, artistName: this.artistName, connectionSaved: this.isConnectionSaved(), refreshing: this.modelRequest !== null, moreOpen: this.moreProviders, advancedOpen: this.advancedOpen });
+        this.container.innerHTML = imageSettingsView({ ...this.settings, connection: this.connection, activeConnectionId: this.connectionId }, { connectionName: this.connectionName, artistName: this.artistName, connectionSaved: this.isConnectionSaved(), refreshing: false, advancedOpen: this.advancedOpen });
         this.mountVibes();
         this.syncParameters();
-        this.syncOpenAIComplexity();
         this.syncImageSizeMode();
         this.syncGeneration();
     }
@@ -209,7 +179,6 @@ export class ImageConfig {
             this.writing = false;
             controls.forEach((control, index) => { if (control.isConnected)
                 control.disabled = disabled[index]; });
-            this.syncProviderButtons();
             this.syncImageSizeMode();
         }
     }
@@ -222,17 +191,11 @@ export class ImageConfig {
         const settings = this.settings;
         const connectionField = field.dataset.connection;
         if (connectionField === 'appendSuffix' && field instanceof HTMLInputElement) {
-            this.cancelModelRefresh();
-            if (this.connection.appendSuffix !== field.checked)
-                this.clearModels();
             this.connection.appendSuffix = field.checked;
             this.syncConnection();
             return;
         }
         if (connectionField === 'channel' || connectionField === 'url' || connectionField === 'key') {
-            this.cancelModelRefresh();
-            if (this.connection[connectionField] !== field.value)
-                this.clearModels();
             if (connectionField === 'channel')
                 this.connection.channel = field.value === 'custom' ? 'custom' : 'official';
             else
@@ -255,51 +218,24 @@ export class ImageConfig {
             return;
         }
         const parameter = field.dataset.parameter;
-        if (settings.provider === 'gemini' || settings.provider === 'grok') {
-            if (parameter)
-                this.editAspect(settings, parameter, field.value);
-            return;
-        }
-        const parameters = settings.provider === 'openai' ? settings.openaiParameters : settings.parameters;
+        const parameters = settings.parameters;
         if (!parameter || !Object.hasOwn(parameters, parameter))
             return;
         if (parameter === 'width' || parameter === 'height')
             this.syncSizePreset();
         if (field instanceof HTMLInputElement && !field.checkValidity())
             return;
-        if (settings.provider === 'openai') {
-            switch (parameter) {
-                case 'model':
-                    settings.openaiParameters.model = field.value;
-                    this.syncOpenAIComplexity();
-                    break;
-                case 'complexity':
-                    settings.openaiParameters.complexity = field.value;
-                    break;
-                case 'quality':
-                    settings.openaiParameters.quality = field.value;
-                    break;
-                case 'width':
-                case 'height':
-                    if (field.value === '')
-                        return;
-                    settings.openaiParameters[parameter] = Number(field.value);
-                    break;
-            }
-            void this.persist('settings');
-            return;
-        }
         switch (parameter) {
             case 'model':
             case 'sampler':
             case 'noiseSchedule':
-                settings.parameters[parameter] = field.value;
+                parameters[parameter] = field.value;
                 if (parameter === 'model')
                     this.vibePanel?.setModel(field.value);
                 break;
             case 'sm':
             case 'smDyn':
-                settings.parameters[parameter] = field.checked;
+                parameters[parameter] = field.checked;
                 break;
             case 'width':
             case 'height':
@@ -309,35 +245,10 @@ export class ImageConfig {
             case 'cfgRescale':
                 if (field.value === '')
                     return;
-                settings.parameters[parameter] = Number(field.value);
+                parameters[parameter] = Number(field.value);
                 break;
         }
         this.syncParameters();
-        void this.persist('settings');
-    }
-    editAspect(settings, parameter, value) {
-        const target = (settings.provider === 'gemini' ? settings.geminiParameters : settings.grokParameters);
-        if (!Object.hasOwn(target, parameter) || target[parameter] === value)
-            return;
-        target[parameter] = value;
-        if (parameter === 'protocol') {
-            // Protocol changes the URL suffix and the model list endpoint; redraw and drop stale lists.
-            this.cancelModelRefresh();
-            this.clearModels();
-            this.render();
-            this.message('settings', '接口协议已切换；如使用中转站，请确认服务 URL。');
-        }
-        else if (parameter !== 'model') {
-            this.render();
-        }
-        else {
-            // Typing a model name keeps focus; only the ratio block (resolution lock and hint) is redrawn.
-            const block = this.container?.querySelector('[data-aspect-block]');
-            if (block) {
-                block.innerHTML = aspectParameters(settings);
-                this.syncImageSizeMode();
-            }
-        }
         void this.persist('settings');
     }
     syncConnection() {
@@ -354,8 +265,6 @@ export class ImageConfig {
         this.message('connection', saved ? '已保存。' : '当前密钥配置尚未保存。');
     }
     syncParameters() {
-        if (this.settings.provider !== 'novelai')
-            return;
         const p = this.settings.parameters;
         const legacy = p.model === 'nai-diffusion-3';
         if (!legacy)
@@ -380,24 +289,12 @@ export class ImageConfig {
                 native.disabled = !legacy;
         }
     }
-    syncOpenAIComplexity() {
-        if (this.settings?.provider !== 'openai' || !this.container)
-            return;
-        const model = this.settings.openaiParameters.model;
-        const input = this.container.querySelector('[data-parameter="complexity"]');
-        if (input)
-            input.disabled = !supportsOpenAIImageComplexity(model);
-        const hint = this.container.querySelector('[data-complexity-hint]');
-        if (hint)
-            hint.textContent = openAIImageComplexityHint(model);
-    }
     syncSizePreset() {
         const width = this.container?.querySelector('[data-parameter="width"]');
         const height = this.container?.querySelector('[data-parameter="height"]');
         const select = this.container?.querySelector('[data-field="sizePreset"]');
         if (width && height && select) {
-            const presets = this.settings.provider === 'openai' ? OPENAI_SIZE_PRESETS : NAI_SIZE_PRESETS;
-            select.value = presets.find(item => item.width === width.valueAsNumber && item.height === height.valueAsNumber)?.value ?? 'custom';
+            select.value = NAI_SIZE_PRESETS.find(item => item.width === width.valueAsNumber && item.height === height.valueAsNumber)?.value ?? 'custom';
         }
     }
     syncImageSizeMode() {
@@ -405,7 +302,7 @@ export class ImageConfig {
             return;
         let mode = 'fixed', error = '';
         try {
-            mode = imageSizeMode(loadModelSettings(this.settings.provider));
+            mode = imageSizeMode(loadModelSettings('novelai'));
         }
         catch (failure) {
             error = failure.message;
@@ -414,13 +311,10 @@ export class ImageConfig {
             button.setAttribute('aria-pressed', String(button.dataset.sizeMode === mode));
             button.disabled = this.writing || isImageSizeModeSaving() || Boolean(error);
         }
-        const aspect = this.settings.provider === 'gemini' || this.settings.provider === 'grok';
         const label = this.container.querySelector('[data-size-selection-label]');
         if (label)
-            label.textContent = aspect ? mode === 'ai' ? '兜底比例' : '画面比例' : mode === 'ai' ? '兜底尺寸' : '预设尺寸';
-        this.message('size-mode', error || (isImageSizeModeSaving() ? '正在同步画幅模式…' : aspect ? mode === 'ai'
-            ? 'AI 动态画幅启用中：配图标记里的 7 种画幅会换成对应比例（1:1 / 2:3 / 3:2 / 3:4 / 4:3 / 9:16 / 16:9），按下方分辨率生成；没写画幅时用兜底比例。'
-            : '所有配图使用下方比例与分辨率。切换模式会互斥启用当前模型 API 预设中的同名格式条目。' : mode === 'ai'
+            label.textContent = mode === 'ai' ? '兜底尺寸' : '预设尺寸';
+        this.message('size-mode', error || (isImageSizeModeSaving() ? '正在同步画幅模式…' : mode === 'ai'
             ? '按每张配图返回的 size 选择画幅；缺少或不支持的尺寸使用下方兜底尺寸。'
             : '所有配图使用下方画幅。切换模式会互斥启用当前模型 API 预设中的同名格式条目。'), Boolean(error));
     }
@@ -432,12 +326,10 @@ export class ImageConfig {
             return;
         const settings = this.settings;
         if (field.dataset.field === 'sizePreset') {
-            const presets = settings.provider === 'openai' ? OPENAI_SIZE_PRESETS : NAI_SIZE_PRESETS;
-            const parameters = settings.provider === 'openai' ? settings.openaiParameters : settings.parameters;
-            const preset = presets.find(item => item.value === field.value);
+            const preset = NAI_SIZE_PRESETS.find(item => item.value === field.value);
             if (preset) {
                 for (const dimension of ['width', 'height']) {
-                    parameters[dimension] = preset[dimension];
+                    settings.parameters[dimension] = preset[dimension];
                     const input = this.container?.querySelector(`[data-parameter="${dimension}"]`);
                     if (input)
                         input.value = String(preset[dimension]);
@@ -451,8 +343,6 @@ export class ImageConfig {
         try {
             await this.write(async () => {
                 if (field.dataset.field === 'connectionProfile') {
-                    this.cancelModelRefresh();
-                    this.clearModels();
                     const profile = settings.connectionProfiles.find(item => item.id === field.value);
                     if (profile) {
                         const connection = { channel: profile.channel, url: profile.url, key: profile.key, appendSuffix: profile.appendSuffix };
@@ -506,27 +396,15 @@ export class ImageConfig {
                 case 'save-connection':
                     await this.write(() => this.saveConnection());
                     break;
-                case 'switch-provider': {
-                    const provider = target.closest('button')?.dataset.provider;
-                    if (provider === 'novelai' || provider === 'openai' || provider === 'gemini' || provider === 'grok')
-                        await this.changeProvider(provider);
-                    break;
-                }
-                case 'toggle-more-providers':
-                    this.toggleMoreProviders();
-                    break;
                 case 'toggle-advanced':
                     this.toggleAdvanced();
-                    break;
-                case 'refresh-models':
-                    void this.refreshModels();
                     break;
                 case 'select-size-mode': {
                     if (isImageSizeModeSaving())
                         return;
                     const mode = target.closest('button')?.dataset.sizeMode;
                     if (mode === 'fixed' || mode === 'ai') {
-                        await this.write(() => saveImageSizeMode(this.settings.provider, mode));
+                        await this.write(() => saveImageSizeMode('novelai', mode));
                     }
                     break;
                 }
@@ -547,17 +425,16 @@ export class ImageConfig {
             }
         }
         catch (error) {
-            this.message(action === 'save-connection' ? 'connection' : action === 'switch-provider' ? 'settings'
+            this.message(action === 'save-connection' ? 'connection'
                 : action === 'select-size-mode' ? 'size-mode' : 'artist', error.message, true);
         }
     }
     async saveConnection() {
-        this.cancelModelRefresh();
-        const connection = validateConnectionFor(this.settings, this.connection);
+        const connection = validateConnectionFor(this.connection);
         // Store the entered URL so disabling suffix completion does not keep an appended path.
         if (connection.channel === 'custom')
             connection.url = this.connection.url.trim();
-        const name = this.connectionName.trim() || (connection.channel === 'official' ? OFFICIAL_NAMES[this.settings.provider] : new URL(connection.url).host);
+        const name = this.connectionName.trim() || (connection.channel === 'official' ? OFFICIAL_NAME : new URL(connection.url).host);
         const id = this.connectionId || newId();
         const settings = this.settings;
         if (settings.connectionProfiles.some(item => item.id !== id && item.name === name)) {
@@ -566,7 +443,6 @@ export class ImageConfig {
         const profile = { ...connection, id, name };
         const next = {
             ...settings, connection, activeConnectionId: id,
-            models: settings.provider === 'novelai' ? settings.models : [...this.modelOptions],
             connectionProfiles: settings.connectionProfiles.some(item => item.id === id)
                 ? settings.connectionProfiles.map(item => item.id === id ? profile : item)
                 : [...settings.connectionProfiles, profile],
@@ -643,16 +519,11 @@ export class ImageConfig {
         this.generationMessage = '';
         this.generationFailed = false;
     }
-    syncProviderButtons() {
-        for (const button of Array.from(this.container?.querySelectorAll('[data-action="switch-provider"]') ?? [])) {
-            button.disabled = this.writing || this.request !== null;
-        }
-    }
     mountVibes() {
         this.vibePanel?.destroy();
         this.vibePanel = null;
         const host = this.container?.querySelector('[data-vibe-host]');
-        if (!host || !this.advancedOpen || this.settings?.provider !== 'novelai')
+        if (!host || !this.advancedOpen)
             return;
         this.vibePanel = new VibePanel();
         this.vibePanel.mount(host, this.settings.parameters.model);
@@ -668,133 +539,6 @@ export class ImageConfig {
         toggle.setAttribute('aria-expanded', String(this.advancedOpen));
         panel.hidden = !this.advancedOpen;
         this.mountVibes();
-    }
-    /** The paper strip stays open while Gemini or Grok is the active brush. */
-    toggleMoreProviders() {
-        const provider = this.settings?.provider;
-        if (provider === 'gemini' || provider === 'grok')
-            return;
-        this.moreProviders = !this.moreProviders;
-        const group = this.container?.querySelector('.image-provider-switch');
-        const toggle = group?.querySelector('[data-action="toggle-more-providers"]');
-        const strip = group?.querySelector('.provider-more-strip');
-        if (!group || !toggle || !strip)
-            return;
-        group.dataset.moreOpen = String(this.moreProviders);
-        toggle.setAttribute('aria-expanded', String(this.moreProviders));
-        toggle.querySelector('.provider-more-label').textContent = this.moreProviders ? '收起' : '更多画笔';
-        strip.hidden = !this.moreProviders;
-        for (const button of Array.from(strip.querySelectorAll('button'))) {
-            if (this.moreProviders)
-                button.removeAttribute('tabindex');
-            else
-                button.tabIndex = -1;
-        }
-    }
-    async changeProvider(provider) {
-        if (!this.settings || provider === this.settings.provider || this.request || !this.validParameters())
-            return;
-        this.cancelModelRefresh();
-        await this.write(async () => {
-            // The connection editor is a separate draft: switching never confirms an unsaved key.
-            await saveImageSettings(structuredClone(this.settings));
-            await switchImageProvider(provider);
-            // Leaving Gemini / Grok for NAI or GPT folds the strip back up.
-            this.moreProviders = provider === 'gemini' || provider === 'grok';
-            this.clearOutput();
-            this.reloadSaved();
-        });
-    }
-    cancelModelRefresh() {
-        const refreshing = this.modelRequest !== null;
-        this.modelRequest?.abort();
-        this.modelRequest = null;
-        this.syncModelRefresh();
-        if (refreshing)
-            this.message('model-list', '');
-    }
-    clearModels() {
-        if (!this.settings || this.settings.provider === 'novelai')
-            return;
-        this.modelOptions = [];
-        this.settings.models = [];
-        const list = this.container?.querySelector('#witch-image-model-options');
-        if (list) {
-            list.replaceChildren();
-            if (this.settings.provider === 'openai')
-                for (const model of OPENAI_IMAGE_26_MODELS) {
-                    const option = document.createElement('option');
-                    option.value = model;
-                    list.append(option);
-                }
-        }
-    }
-    syncModelRefresh() {
-        const button = this.container?.querySelector('[data-action="refresh-models"]');
-        if (!button)
-            return;
-        button.disabled = this.writing || this.modelRequest !== null;
-        button.textContent = this.modelRequest ? '刷新中…' : '刷新列表';
-    }
-    async refreshModels() {
-        const settings = this.settings;
-        if (!settings || settings.provider === 'novelai' || this.modelRequest)
-            return;
-        const request = new AbortController();
-        this.modelRequest = request;
-        this.syncModelRefresh();
-        this.message('model-list', '正在获取模型列表…');
-        const connection = { ...this.connection };
-        const current = () => this.modelRequest === request && !request.signal.aborted && this.settings === settings;
-        try {
-            const models = (isSifangEnvironment() || isServiceEditor()) ? await (await import('./service-client.js')).requestServiceModels('image-models', {
-                provider: settings.provider, connection, geminiParameters: settings.geminiParameters, grokParameters: settings.grokParameters,
-            }, request.signal)
-                : settings.provider === 'gemini' ? await fetchGeminiImageModels(connection, settings.geminiParameters, request.signal)
-                    : settings.provider === 'grok' && settings.grokParameters.protocol === 'xai' ? await fetchGrokImageModels(connection, request.signal)
-                        : await fetchOpenAIImageModels(connection, request.signal);
-            if (!current())
-                return;
-            if (!models.length) {
-                this.message('model-list', '接口没有返回可选模型，已保留原列表，可手动填写模型名称。');
-                return;
-            }
-            this.modelOptions = models;
-            const list = this.container?.querySelector('#witch-image-model-options');
-            if (list) {
-                const fragment = document.createDocumentFragment();
-                for (const model of new Set([...(settings.provider === 'openai' ? OPENAI_IMAGE_26_MODELS : []), ...models])) {
-                    const option = document.createElement('option');
-                    option.value = model;
-                    fragment.append(option);
-                }
-                list.replaceChildren(fragment);
-            }
-            const savedConnection = settings.connection;
-            const confirmed = connection.channel === savedConnection.channel && connection.url === savedConnection.url
-                && connection.key === savedConnection.key && connection.appendSuffix === savedConnection.appendSuffix;
-            if (confirmed) {
-                settings.models = models;
-                this.pendingSaves++;
-                try {
-                    await saveImageSettings(structuredClone(settings));
-                }
-                finally {
-                    this.pendingSaves--;
-                }
-            }
-            if (current())
-                this.message('model-list', `已获取 ${models.length} 个模型，当前填写的模型名称保持不变。${confirmed ? '' : '保存当前连接后会保留此列表。'}`);
-        }
-        catch (error) {
-            if (current())
-                this.message('model-list', error.message, true);
-        }
-        finally {
-            if (this.modelRequest === request)
-                this.modelRequest = null;
-            this.syncModelRefresh();
-        }
     }
     async generate() {
         if (this.request)
@@ -818,7 +562,7 @@ export class ImageConfig {
         const pet = petTaskId();
         const endPet = petEnd();
         const petImage = { type: 'end', id: pet, task: 'image', source: 'config' };
-        emitPetEvent({ type: 'image', id: pet, source: 'config', phase: 'start', provider: snapshot.provider });
+        emitPetEvent({ type: 'image', id: pet, source: 'config', phase: 'start', provider: 'novelai' });
         const source = imageChatContext();
         const id = newId();
         const draft = {
@@ -828,7 +572,7 @@ export class ImageConfig {
         };
         try {
             const result = await generateConfiguredImage(snapshot, snapshot.positive, request.signal, progress => {
-                if (request.signal.aborted || this.settings?.provider !== snapshot.provider)
+                if (request.signal.aborted)
                     return;
                 this.generationPhase = progress.state;
                 this.generationMessage = progress.state === 'queued' ? `等待绘制 · 队列第 ${progress.position} 位` : '正在生成图片…';
@@ -836,10 +580,9 @@ export class ImageConfig {
                     position: progress.state === 'queued' ? progress.position : undefined, columns: progress.columns });
                 this.syncGeneration();
             }, '', { history: draft, workshop: {
-                    parameters: snapshot.parameters, openaiParameters: snapshot.openaiParameters, geminiParameters: snapshot.geminiParameters,
-                    grokParameters: snapshot.grokParameters, negative: snapshot.negative,
+                    parameters: snapshot.parameters, negative: snapshot.negative,
                 } });
-            if (request.signal.aborted || this.settings?.provider !== snapshot.provider) {
+            if (request.signal.aborted) {
                 endPet({ ...petImage, result: 'dropped', paid: true, message: '' });
                 return;
             }
@@ -867,8 +610,7 @@ export class ImageConfig {
                 emitPetEvent({ type: 'history', id: pet, saved: true, message: this.generationMessage });
             }
             catch (error) {
-                if (this.settings?.provider === snapshot.provider)
-                    this.generationMessage = `图片已生成，但未能保存到回顾：${error instanceof Error ? error.message : '存储不可用'}`;
+                this.generationMessage = `图片已生成，但未能保存到回顾：${error instanceof Error ? error.message : '存储不可用'}`;
                 emitPetEvent({ type: 'history', id: pet, saved: false, message: this.generationMessage });
             }
             finally {
@@ -876,10 +618,6 @@ export class ImageConfig {
             }
         }
         catch (error) {
-            if (this.settings?.provider !== snapshot.provider) {
-                endPet({ ...petImage, result: 'dropped', message: '' });
-                return;
-            }
             this.generationFailed = !request.signal.aborted;
             this.generationMessage = request.signal.aborted
                 ? this.generationPhase === 'queued' ? '已取消排队。' : '已取消等待，服务端任务可能仍在继续。'
@@ -906,7 +644,6 @@ export class ImageConfig {
     syncGeneration() {
         if (!this.container || !this.settings)
             return;
-        this.syncProviderButtons();
         const busy = this.request !== null;
         const button = this.container.querySelector('[data-action="generate"]');
         button.disabled = busy;

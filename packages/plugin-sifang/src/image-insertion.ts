@@ -180,8 +180,10 @@ export function applyImageInsertions(plan: ImageInsertionPlan, response: string,
   if (fence) source = fence[1];
   let decoded: unknown;
   try { decoded = JSON.parse(source); }
-  catch { throw withFault(new Error('AI 需要返回配图 JSON 数组，原文未修改。'), 'format'); }
-  if (!Array.isArray(decoded)) throw withFault(new Error('AI 需要返回配图 JSON 数组，不能返回改写后的正文。'), 'format');
+  catch { throw withFault(new Error('AI 未返回有效的配图 JSON，原文未修改。'), 'format'); }
+  if (decoded && typeof decoded === 'object' && !Array.isArray(decoded)
+    && Object.keys(decoded).length === 1 && Object.hasOwn(decoded, 'images')) decoded = (decoded as { images: unknown }).images;
+  if (!Array.isArray(decoded)) throw withFault(new Error('配图 JSON 须为数组，或仅含 images 数组的对象。原文未修改。'), 'format');
   const existing = parseImageMarkers(plan.original);
   if (decoded.length + existing.length > MAX_IMAGE_MARKERS) throw withFault(new Error('图片标记总数不能超过 64 处。'), 'format');
   const positions = new Map(plan.points.map(point => [point.id, point.offset]));

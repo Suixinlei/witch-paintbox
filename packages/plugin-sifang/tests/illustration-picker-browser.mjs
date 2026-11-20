@@ -55,7 +55,6 @@ export async function testIllustrationPicker(page, screenshots) {
     await page.evaluate(async original => {
       const image = await import('/dist/image-settings.js');
       await image.saveImageSettings(image.defaultImageSettings());
-      await image.switchImageProvider('novelai');
       const model = await import('/dist/model-settings.js');
       // Test-only fixture; all requests are intercepted, with no provider credentials.
       const settings = model.defaultModelSettings();

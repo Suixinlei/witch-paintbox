@@ -12,7 +12,7 @@ const METADATA_LIMIT = 16 * 1024 * 1024;
 
 export type HistoryDraft = Pick<ImageHistoryEntry, 'id' | 'markerKey' | 'scenePrompt' | 'title' | 'sourceName'>;
 export interface PersistedImage { id: string; createdAt: number; error?: string }
-export type WorkshopParameters = Pick<ImageSettings, 'parameters' | 'openaiParameters' | 'geminiParameters' | 'grokParameters' | 'negative'>;
+export type WorkshopParameters = Pick<ImageSettings, 'parameters' | 'negative'>;
 export type ServicePrompt =
   | { prompt: PreparedImagePrompt; size?: ImageSize }
   | { scene: string; size?: ImageSize; workshop?: WorkshopParameters };

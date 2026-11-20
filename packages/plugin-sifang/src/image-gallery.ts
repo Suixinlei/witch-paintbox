@@ -1,5 +1,5 @@
-import { openAIImageComplexityLabel, supportsOpenAIImageComplexity } from './openai-image.js';
 import type { ImageHistoryEntry } from './image-history.js';
+import type { LegacyImageParameters } from './image-history-data.js';
 import { NAI_MODELS, NAI_SAMPLERS, NAI_SCHEDULES } from './novelai.js';
 import { imageFileExtension } from './raster-image.js';
 
@@ -201,22 +201,20 @@ export function createImageGallery(summary: string, signal: AbortSignal, handler
     download.removeAttribute('aria-disabled');
     download.removeAttribute('tabindex');
     const fields: Array<[string, string | number]> = [
-      ['生图服务', entry.provider === 'openai' ? 'GPT / OpenAI 兼容接口' : entry.provider === 'gemini' ? 'Google Gemini'
-        : entry.provider === 'grok' ? 'xAI Grok' : 'NovelAI'],
-      ['模型', entry.provider === 'openai' || entry.provider === 'gemini' || entry.provider === 'grok' ? entry.parameters.model
+      ['生图服务', entry.provider === 'openai' ? 'GPT / OpenAI 兼容接口（旧渠道）' : entry.provider === 'gemini' ? 'Google Gemini（旧渠道）'
+        : entry.provider === 'grok' ? 'xAI Grok（旧渠道）' : 'NovelAI'],
+      ['模型', entry.provider && entry.provider !== 'novelai' ? String(entry.parameters.model ?? '未知')
         : NAI_MODELS.find(model => model.value === entry.parameters.model)?.label ?? entry.parameters.model],
       ['尺寸', `${entry.parameters.width} × ${entry.parameters.height}`],
       ['输出格式', imageFileExtension(entry.blob).toUpperCase()],
       ['生成时间', new Date(entry.createdAt).toLocaleString('zh-CN', { hour12: false })],
     ];
-    if (entry.provider === 'openai') {
-      fields.push(['请求质量', entry.parameters.quality]);
-      if (supportsOpenAIImageComplexity(entry.parameters.model)) fields.push(['请求规划深度', openAIImageComplexityLabel(entry.parameters.complexity)]);
-    } else if (entry.provider === 'gemini') {
-      fields.push(['接口协议', entry.parameters.protocol], ['请求比例', entry.parameters.aspectRatio], ['分辨率档位', entry.parameters.imageSize]);
-    } else if (entry.provider === 'grok') {
-      fields.push(['接口协议', entry.parameters.protocol === 'xai' ? 'xAI 原生' : 'OpenAI 兼容'], ['请求比例', entry.parameters.aspectRatio],
-        ['分辨率档位', entry.parameters.resolution.toUpperCase()], ['请求质量', entry.parameters.quality]);
+    if (entry.provider && entry.provider !== 'novelai') {
+      // Legacy GPT / Gemini / Grok records: show whatever request parameters were stored.
+      const legacy = entry.parameters as LegacyImageParameters;
+      if (typeof legacy.quality === 'string') fields.push(['请求质量', legacy.quality]);
+      if (typeof legacy.protocol === 'string') fields.push(['接口协议', legacy.protocol]);
+      if (typeof legacy.aspectRatio === 'string') fields.push(['请求比例', legacy.aspectRatio]);
     } else {
       const params = entry.parameters;
       fields.push(

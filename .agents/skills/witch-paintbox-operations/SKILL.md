@@ -1,18 +1,21 @@
 ---
 name: witch-paintbox-operations
-description: Deploy the local Windows Witch Paintbox server, publish the 四方世界 plugin to GitHub, or apply the local Risu drawing plugin. Use for release, restart, verification, and installation requests for this monorepo.
+description: Use when implementing changes to the Witch Paintbox service or its management UI, and for deployment, restart, verification, or plugin release in this repo. Apply and verify service changes on the local Windows instance before handing back. Also covers GitHub releases of 四方世界 and local Risu plugin updates.
 ---
 
 # 魔女画匣三端运维
 
-以下命令从仓库根目录运行。按用户本次点名的端执行。用户同时要求部署服务和发布四方时，先准备发布提交，在同一份待发布代码上部署和验证服务，再推 GitHub。
+以下命令从仓库根目录运行。
+
+- 改了独立服务、管理台或服务实际加载的共享运行时代码，就在同一轮完成本机部署和验收，包括从 Risu 发起、实际由服务实现的功能。用户明确要求只改代码或暂缓上线时，按该要求执行。
+- GitHub 发布四方插件和写入本机 Risu 已安装插件走各自流程。用户同时要求部署服务和发布四方时，先准备发布提交，在同一份待发布代码上部署和验证服务，再推 GitHub。
 
 ## Server
 
-用户授权更新并重启时，在一次 PowerShell tool call 执行以下命令。若 shell 返回进程会话，等待该会话并读取最终状态。
+本机服务改动完成后，执行以下命令。若 shell 返回进程会话，等待该会话并读取最终状态。
 
 ```powershell
-& ./skills/witch-paintbox-operations/scripts/update-server.ps1 -Apply
+& ./.agents/skills/witch-paintbox-operations/scripts/update-server.ps1 -Apply
 ```
 
 省略 `-Apply` 时只检查运行状态。脚本构建并跑服务测试，在独立目录安装运行依赖，用临时端口和空数据预检。建议在无人发起新任务的时段操作。脚本看到队列空闲后切换并重启 Windows 计划任务 `Witch Paintbox Local Service`，沿用 `%LOCALAPPDATA%/WitchPaintbox/service.env` 和原数据目录。验收包括端口 4783 的新进程、管理页、权限、配置版本、历史图片和 Risu 偏好。仅在报告 `updated` 时确认部署成功。若失败，按脚本结果区分旧服务仍在、已回退或回退失败。验收使用现有记录，无需真实出图。

@@ -124,7 +124,7 @@ export async function requestServicePlan(request: ServicePlanRequest, signal: Ab
   return { result: value, pictures };
 }
 
-export async function requestServiceModels(kind: 'models' | 'image-models', request: Record<string, unknown>,
+export async function requestServiceModels(kind: 'models', request: Record<string, unknown>,
   signal?: AbortSignal): Promise<string[]> {
   const result = await (await sendService(kind, request, signal, undefined, 25_000)).json();
   if (!Array.isArray(result) || !result.every(value => typeof value === 'string')) throw new Error('独立服务返回的模型列表无效。');

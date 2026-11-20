@@ -4,7 +4,7 @@ import { readFile, rename, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { parseArchive, MAX_ARCHIVE_BYTES } from '@witch-paintbox/plugin-sifang/runtime/config-archive.js';
+import { parseArchive, retainNovelAI, MAX_ARCHIVE_BYTES } from '@witch-paintbox/plugin-sifang/runtime/config-archive.js';
 import { packet, unpack } from '@witch-paintbox/plugin-sifang/runtime/service-protocol.js';
 import { VIBE_IMAGE_LIMIT } from '@witch-paintbox/plugin-sifang/runtime/vibe-transfer.js';
 
@@ -15,7 +15,12 @@ async function readConfig(blob) {
   if (!value || !Array.isArray(value.vibes) || typeof value.normalize !== 'boolean'
     || value.revision !== null && !/^[\da-f-]{36}$/.test(value.revision)
     || !blobs[0] || blobs[0].size > MAX_ARCHIVE_BYTES) throw new Error('配置包格式无效。');
-  const archive = parseArchive(await blobs[0].text());
+  let portable;
+  try { portable = JSON.parse((await blobs[0].text()).replace(/^\uFEFF/, '')); }
+  catch { throw new Error('文件不是有效的 JSON。'); }
+  retainNovelAI(portable);
+  const source = JSON.stringify(portable);
+  const archive = parseArchive(source);
   if (archive.kind !== 'all') throw new Error('请发送完整的画匣配置。');
   const used = new Set([0]);
   function image(index) {
@@ -40,7 +45,14 @@ async function readConfig(blob) {
     return { ...item, image: image(imageIndex), thumbnail: image(thumbnailIndex) };
   });
   if (used.size !== blobs.length) throw new Error('配置包中包含未引用的文件。');
-  return { manifest: value, blobs, snapshot: { ...archive.data, vibes: { items, normalize: value.normalize } } };
+  const normalized = [new Blob([source]), ...blobs.slice(1)];
+  // Older clients require every profile in v2 archives. Only supply empty compatibility defaults.
+  if (portable.version === 2) {
+    const { image, model } = archive.data;
+    portable.data.image.profiles = { ...image.profiles, novelai: portable.data.image.profiles.novelai };
+    portable.data.model.presets = model.presets;
+  }
+  return { manifest: value, blobs: normalized, portable, snapshot: { ...archive.data, vibes: { items, normalize: value.normalize } } };
 }
 
 export async function openServiceConfig(directory) {
@@ -57,7 +69,9 @@ export async function openServiceConfig(directory) {
   return {
     snapshot: () => current?.snapshot,
     revision: () => current?.manifest.revision ?? null,
-    download: () => current ? packet(current.manifest, current.blobs) : null,
+    download: () => current ? packet(current.manifest, [
+      new Blob([JSON.stringify(current.portable)]), ...current.blobs.slice(1),
+    ]) : null,
     save(blob, signal) {
       const task = writes.catch(() => {}).then(async () => {
         const next = await readConfig(blob);

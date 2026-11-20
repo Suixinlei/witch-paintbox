@@ -11,7 +11,7 @@ export function createPromptOrder(head, tail, layers = builtinLayerIds) {
 export function defaultModelSettings(presetProvider = 'novelai') {
     return {
         presetProvider, mode: 'tavern', url: '', key: '', model: '', models: [],
-        maxTokens: 2048, temperature: 1, transport: 'compatible', thinkingMode: 'default',
+        maxTokens: 2048, temperature: 1, transport: 'compatible', thinkingMode: 'default', jsonOutput: false,
         head: [], tail: [], enabledLayers: [...builtinLayerIds], presetName: '', parseImageMarkers: true,
         hideImageContext: true, promptOrder: createPromptOrder([], []), worldbookSource: 'uploads', worldbooks: [],
     };
@@ -75,6 +75,8 @@ export function validateModelSettings(value) {
         invalid();
     if (source.thinkingMode !== undefined && !MODEL_THINKING_MODES.includes(source.thinkingMode))
         invalid();
+    if (source.jsonOutput !== undefined && typeof source.jsonOutput !== 'boolean')
+        invalid();
     if (source.parseImageMarkers !== undefined && typeof source.parseImageMarkers !== 'boolean')
         invalid();
     if (source.hideImageContext !== undefined && typeof source.hideImageContext !== 'boolean')
@@ -118,6 +120,7 @@ export function validateModelSettings(value) {
         maxTokens: number(source.maxTokens, 1, 65_536, true), temperature: number(source.temperature, 0, 2),
         transport: source.transport,
         thinkingMode: source.thinkingMode ?? 'default',
+        jsonOutput: source.jsonOutput === true,
         head, tail,
         enabledLayers, promptOrder, worldbookSource: 'uploads', worldbooks,
         presetName: source.presetName === undefined ? '' : text(source.presetName, 256),
@@ -131,9 +134,9 @@ export function modelPresetSettings(settings) {
 }
 export function modelSharedSettings(settings) {
     const { mode, url, key, model, models, maxTokens, temperature, transport, parseImageMarkers, hideImageContext } = settings;
-    const { thinkingMode } = settings;
+    const { thinkingMode, jsonOutput } = settings;
     return structuredClone({ mode, url, key, model, models, maxTokens, temperature, transport,
-        thinkingMode: thinkingMode ?? 'default', parseImageMarkers, hideImageContext });
+        thinkingMode: thinkingMode ?? 'default', jsonOutput: jsonOutput ?? false, parseImageMarkers, hideImageContext });
 }
 function defaultAllModelSettings() {
     return {
@@ -157,9 +160,7 @@ export function validateAllModelSettings(value) {
     const parsed = {};
     let shared = null;
     for (const provider of IMAGE_PROVIDERS) {
-        // Gemini and Grok write natural-language prompts like GPT: start from the GPT preset when missing.
-        const raw = presets[provider] ?? (provider === 'gemini' || provider === 'grok' ? presets.openai : undefined);
-        const value = validateModelSettings({ ...record(raw), ...api, presetProvider: provider });
+        const value = validateModelSettings({ ...record(presets[provider]), ...api, presetProvider: provider });
         parsed[provider] = modelPresetSettings(value);
         shared ??= modelSharedSettings(value);
     }
@@ -184,7 +185,7 @@ export function modelSettingsForProvider(value, provider) {
     return validateModelSettings({ ...value.api, ...value.presets[provider], presetProvider: provider });
 }
 export function hasSavedModelSettings() { return settingsStorage.hasSaved(); }
-/** A deleted book must disappear from both provider presets. */
+/** A deleted book must disappear from the saved preset. */
 export async function detachStoredWorldbook(name) {
     if (!hasSavedModelSettings())
         return;

@@ -1,7 +1,5 @@
 import type { CharacterPrompt } from './image-prompt.js';
-import { validateOpenAIImageParameters } from './openai-image.js';
-import { validateGeminiImageParameters, validateGrokImageParameters, type GeminiImageParameters, type GrokImageParameters } from './aspect-image.js';
-import { historyScope, historySourceName, type ImageHistoryEntry, type ImageHistoryData, type Sized } from './image-history-data.js';
+import { historyScope, historySourceName, type ImageHistoryEntry, type ImageHistoryData } from './image-history-data.js';
 
 const databaseName = 'witch-paintbox-image-history';
 const storeName = 'images';
@@ -213,37 +211,31 @@ export function snapshotImageHistory(value: unknown): ImageHistoryEntry {
     ...(typeof entry.sourceName === 'string' ? { sourceName: entry.sourceName.slice(0, 200) } : {}),
   };
   // Copy only image metadata: connection credentials and arbitrary extra fields never enter this store.
-  if (entry.provider === 'openai') {
-    // A compatible provider may return a different canvas; retain its validated raster dimensions.
-    const parameters = validateOpenAIImageParameters(entry.parameters, 'image');
-    if (!parameters.model || entry.negative || characters?.length || entry.seed !== undefined) {
-      throw new Error('GPT 图片历史记录格式无效，原有记录未修改。');
+  if (entry.provider === 'openai' || entry.provider === 'gemini' || entry.provider === 'grok') {
+    // Legacy GPT / Gemini / Grok records only need enough shape to stay viewable.
+    const raw = entry.parameters;
+    if (!raw || typeof raw.model !== 'string' || !raw.model.trim()
+      || !Number.isInteger(raw.width) || !Number.isInteger(raw.height)
+      || raw.width < 1 || raw.width > 16_384 || raw.height < 1 || raw.height > 16_384
+      || entry.negative || characters?.length || entry.seed !== undefined) {
+      throw new Error('图片历史记录格式无效，原有记录未修改。');
     }
-    return { ...common, provider: 'openai', parameters };
+    return { ...common, provider: entry.provider, parameters: raw };
   }
-  if (entry.provider === 'gemini' || entry.provider === 'grok') {
-    const bad = (): never => { throw new Error('图片历史记录格式无效，原有记录未修改。'); };
-    const raw = entry.parameters as Sized<GeminiImageParameters | GrokImageParameters>;
-    const sized = [raw?.width, raw?.height].every(size => Number.isInteger(size) && size >= 1 && size <= 16_384);
-    if (!sized || entry.negative || characters?.length || entry.seed !== undefined) bad();
-    const { width, height } = raw;
-    return entry.provider === 'gemini'
-      ? { ...common, provider: 'gemini', parameters: { ...validateGeminiImageParameters(raw, bad), width, height } }
-      : { ...common, provider: 'grok', parameters: { ...validateGrokImageParameters(raw, bad), width, height } };
-  }
-  const parameters = entry.parameters;
-  if (!Number.isInteger(entry.seed) || entry.seed < 0 || entry.seed > 4_294_967_295
+  const seed = entry.seed ?? Number.NaN;
+  const parameters = entry.parameters as Record<string, unknown> | null | undefined;
+  if (!Number.isInteger(seed) || seed < 0 || seed > 4_294_967_295
     || !parameters || typeof parameters.model !== 'string' || typeof parameters.sampler !== 'string'
     || typeof parameters.noiseSchedule !== 'string' || typeof parameters.sm !== 'boolean' || typeof parameters.smDyn !== 'boolean'
     || ![parameters.width, parameters.height, parameters.steps, parameters.scale, parameters.cfgRescale].every(Number.isFinite)) {
     throw new Error('图片历史记录格式无效，原有记录未修改。');
   }
   return {
-    ...common, provider: 'novelai', seed: entry.seed,
+    ...common, provider: 'novelai', seed,
     parameters: {
-      model: parameters.model, width: parameters.width, height: parameters.height,
-      steps: parameters.steps, scale: parameters.scale, sampler: parameters.sampler,
-      seed: entry.seed, noiseSchedule: parameters.noiseSchedule, cfgRescale: parameters.cfgRescale,
+      model: parameters.model, width: parameters.width as number, height: parameters.height as number,
+      steps: parameters.steps as number, scale: parameters.scale as number, sampler: parameters.sampler,
+      seed, noiseSchedule: parameters.noiseSchedule, cfgRescale: parameters.cfgRescale as number,
       sm: parameters.sm, smDyn: parameters.smDyn,
     },
   };

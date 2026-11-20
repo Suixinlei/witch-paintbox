@@ -41,7 +41,7 @@ function requireContext() {
     return context;
 }
 async function encodeConfig(expected) {
-    const [archive, state] = await Promise.all([exportArchive('all', true, requireContext()), loadVibes()]);
+    const [archive, state] = await Promise.all([exportArchive('all', true, requireContext(), true), loadVibes()]);
     const blobs = [archive.slice(0, archive.size, '')];
     const add = (blob) => blob ? blobs.push(blob) - 1 : null;
     const vibes = state.items.map(({ image, thumbnail, ...item }) => ({ ...item, imageIndex: add(image), thumbnailIndex: add(thumbnail) }));
@@ -126,7 +126,7 @@ export async function pullServiceConfig(signal) {
         const { value, blobs } = await unpack(await response.blob());
         if (!value.revision || !blobs[0])
             throw new Error('服务配置格式无效。');
-        const archive = parseArchive(await blobs[0].text());
+        const archive = parseArchive(await blobs[0].text(), true);
         if (archive.kind !== 'all')
             throw new Error('服务配置格式无效。');
         const vibes = value.vibes.map(({ imageIndex, thumbnailIndex, ...item }) => ({

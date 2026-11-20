@@ -1,6 +1,14 @@
 // Release dates use Asia/Shanghai. Historical entries follow the local repository log.
 const updates = [
     {
+        date: '2026-11-20', title: '生图通道仅保留 NovelAI',
+        changes: [
+            '移除 GPT、Gemini、Grok 生图通道：界面不再出现通道切换与“更多画笔”，相关配置、连接、画师串与预设一并清理。',
+            '旧配置载入时只保留 NAI 通道内容；来自旧通道的分享文件会明确提示不支持，世界书挂载仅导入 NAI 一套。',
+            '此前由旧通道生成的历史图片仍可在生图回顾中查看，属性标注“旧渠道”。',
+        ],
+    },
+    {
         date: '2026-11-10', title: '生图回顾删除后保持相邻位置',
         changes: [
             '修复删除当前图片后跳到本页最后一张的问题：删除后选中原顺序中的下一张，后方已无图片时回到前一张。',

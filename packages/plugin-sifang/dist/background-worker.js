@@ -1,5 +1,3 @@
-import { decodeGeminiResponse } from './gemini-image.js';
-import { decodeOpenAIResponse } from './openai-image.js';
 import { readImageResponse } from './image-response.js';
 import * as history from './image-history-store.js';
 import { ImageResponseError } from './image-bytes.js';
@@ -8,8 +6,6 @@ function response({ body, length }) {
 }
 export const operations = {
     decodeNovelAI: (signal, body) => readImageResponse(response(body), signal),
-    decodeOpenAI: (signal, body) => decodeOpenAIResponse(response(body), signal),
-    decodeGemini: (signal, body) => decodeGeminiResponse(response(body), signal),
     loadHistory: (_signal, ...args) => history.loadImageHistory(...args),
     saveHistory: (_signal, ...args) => history.saveImageHistory(...args),
     deleteHistory: (_signal, ...args) => history.deleteImageHistory(...args),

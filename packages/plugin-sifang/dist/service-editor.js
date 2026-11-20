@@ -97,10 +97,6 @@ export async function mountServiceEditor(container, connection) {
         const refreshTheme = bindPaintboxTheme(container, () => readSettings(context).paintboxTheme, signal);
         const showStatus = () => { select('[data-editor-status]').textContent = serviceConfigStatus(); };
         window.addEventListener('witch-paintbox:service-config-status', showStatus, { signal });
-        window.addEventListener('witch-paintbox:image-provider-changed', () => {
-            if (!transfer.isApplying)
-                transfer.mount(select('[data-config-transfer]'));
-        }, { signal });
         showStatus();
         image.mount(select('[data-image-settings]'));
         model.mount(select('[data-model-settings]'), 'service');

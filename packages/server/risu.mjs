@@ -13,13 +13,19 @@ function preferences(value) {
   return { enabled, maxIllustrations, dynamicSize, maxInputChars };
 }
 
-function cardRecord(value) {
+function cardRecord(value, legacy = false) {
   if (!object(value) || !risuCardId(value.card?.chaId) || !text(value.card.name, 2048) || !value.card.name.trim()
     || !object(value.library) || !Array.isArray(value.library.people) || !Array.isArray(value.library.backgrounds)
     || [value.library.people, value.library.backgrounds].some(entries => entries.length > 1000
       || entries.some(entry => !object(entry) || !text(entry.name, 2048) || !entry.name.trim()))
     || Object.hasOwn(value.card, 'chats') || Object.hasOwn(value.card, 'coldStoragedChats')) invalid();
-  return { card: value.card, library: value.library };
+  const { card, library, artistPresetIds } = value;
+  if (artistPresetIds === undefined) return { card, library };
+  if (!object(artistPresetIds) || (!legacy && Object.keys(artistPresetIds).some(provider => provider !== 'novelai'))) invalid();
+  const { novelai } = artistPresetIds;
+  if (novelai === undefined) return { card, library };
+  if (!text(novelai, 128) || !novelai.trim()) invalid();
+  return { card, library, artistPresetIds: { novelai } };
 }
 
 export async function openRisuConfig(directory) {
@@ -27,7 +33,7 @@ export async function openRisuConfig(directory) {
   let state = { revision: null, preferences: risuDefaults, cards: [] };
   try {
     const saved = JSON.parse(await readFile(path, 'utf8'));
-    state = { revision: saved.revision, preferences: preferences(saved.preferences), cards: saved.cards.map(cardRecord) };
+    state = { revision: saved.revision, preferences: preferences(saved.preferences), cards: saved.cards.map(value => cardRecord(value, true)) };
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
   let tail = Promise.resolve();
 
@@ -57,7 +63,7 @@ export async function openRisuConfig(directory) {
     },
     putCards(data, signal) {
       if (!Array.isArray(data.cards) || data.cards.length < 1 || data.cards.length > 100) invalid();
-      const records = data.cards.map(cardRecord);
+      const records = data.cards.map(value => cardRecord(value));
       if (new Set(records.map(entry => entry.card.chaId)).size !== records.length) invalid();
       return save(data.revision, current => {
         const cards = new Map(current.cards.map(entry => [entry.card.chaId, entry]));
@@ -86,5 +92,6 @@ export function risuLibrary(entry) {
   }
   const backgrounds = (entry?.library.backgrounds ?? []).map(scene => `${scene.name}: ${string(scene.description)}`).join('\n');
   const description = [entry?.card.desc, entry?.card.scenario].map(string).filter(Boolean).join('\n').slice(0, 6000);
-  return { anchors, sharedOutfits: [], context: [description, backgrounds].filter(Boolean).join('\n\n').slice(0, 24000) };
+  return { anchors, sharedOutfits: [], artistPresetIds: entry?.artistPresetIds,
+    context: [description, backgrounds].filter(Boolean).join('\n\n').slice(0, 24000) };
 }

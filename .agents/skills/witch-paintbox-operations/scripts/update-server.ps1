@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [string]$RepoRoot = (Join-Path $PSScriptRoot '../../..'),
+    [string]$RepoRoot = (Join-Path $PSScriptRoot '../../../..'),
     [switch]$Apply
 )
 

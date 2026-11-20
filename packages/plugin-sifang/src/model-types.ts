@@ -19,6 +19,7 @@ export interface ModelApiSettings {
   temperature: number;
   transport: ModelTransport;
   thinkingMode?: ModelThinkingMode;
+  jsonOutput?: boolean;
 }
 
 export interface ModelMessage {

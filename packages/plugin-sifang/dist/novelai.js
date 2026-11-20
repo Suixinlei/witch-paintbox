@@ -130,7 +130,7 @@ function snapshotCharacters(characters, model) {
     });
 }
 /** Freeze each click before joining the shared queue; never repeat a billable request. */
-export async function generateImage(connection, params, positive, negative, signal, onProgress, characters = [], vibes = null) {
+export async function generateImage(connection, params, positive, negative, signal, onProgress, characters = [], vibes = null, send = fetch) {
     if (signal.aborted)
         throw abortError();
     const configured = validateImageConnection(connection);
@@ -193,9 +193,9 @@ export async function generateImage(connection, params, positive, negative, sign
         parameters.normalize_reference_strength_multiple = vibes.normalize;
     }
     const body = JSON.stringify({ input: positive, model: params.model, action: 'generate', parameters });
-    return queueImageGeneration(() => requestImage(configured, body, seed, signal), signal, onProgress);
+    return queueImageGeneration(() => requestImage(configured, body, seed, signal, send), signal, onProgress);
 }
-async function requestImage(configured, body, seed, signal) {
+async function requestImage(configured, body, seed, signal, send) {
     const controller = new AbortController();
     let interruption;
     const interrupt = (error) => {
@@ -215,7 +215,7 @@ async function requestImage(configured, body, seed, signal) {
     const timer = setTimeout(() => interrupt(new ImageResponseError('生图等待超时，请确认服务端任务状态后再操作；没有自动重试。', 'timeout')), GENERATION_TIMEOUT_MS);
     try {
         ensureActive();
-        const response = await fetch(configured.channel === 'official' ? OFFICIAL_ENDPOINT : configured.url, {
+        const response = await send(configured.channel === 'official' ? OFFICIAL_ENDPOINT : configured.url, {
             method: 'POST', mode: 'cors', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
             headers: { Authorization: `Bearer ${configured.key}`, 'Content-Type': 'application/json', Accept: 'application/zip' },
             body,
@@ -241,7 +241,9 @@ async function requestImage(configured, body, seed, signal) {
             throw interruption;
         if (error instanceof ImageResponseError)
             throw error;
-        return fail('生图未完成，请检查网络或浏览器跨域限制；没有自动重试。', 'network');
+        return fail(send === fetch
+            ? '生图未完成，请检查网络或浏览器跨域限制；没有自动重试。'
+            : '未能确认 NovelAI 是否接收了生图请求，服务未重复提交。请检查服务端网络或代理。', 'network');
     }
     finally {
         clearTimeout(timer);

@@ -45,7 +45,7 @@ export function createPromptOrder(head: PromptEntry[], tail: PromptEntry[], laye
 export function defaultModelSettings(presetProvider: ImageProvider = 'novelai'): ModelSettings {
   return {
     presetProvider, mode: 'tavern', url: '', key: '', model: '', models: [],
-    maxTokens: 2048, temperature: 1, transport: 'compatible', thinkingMode: 'default',
+    maxTokens: 2048, temperature: 1, transport: 'compatible', thinkingMode: 'default', jsonOutput: false,
     head: [], tail: [], enabledLayers: [...builtinLayerIds], presetName: '', parseImageMarkers: true,
     hideImageContext: true, promptOrder: createPromptOrder([], []), worldbookSource: 'uploads', worldbooks: [],
   };
@@ -101,6 +101,7 @@ export function validateModelSettings(value: unknown): ModelSettings {
   if (source.mode !== 'tavern' && source.mode !== 'custom') invalid();
   if (source.transport !== 'nonstream' && source.transport !== 'stream' && source.transport !== 'compatible' && source.transport !== 'toolcall') invalid();
   if (source.thinkingMode !== undefined && !MODEL_THINKING_MODES.includes(source.thinkingMode as ModelThinkingMode)) invalid();
+  if (source.jsonOutput !== undefined && typeof source.jsonOutput !== 'boolean') invalid();
   if (source.parseImageMarkers !== undefined && typeof source.parseImageMarkers !== 'boolean') invalid();
   if (source.hideImageContext !== undefined && typeof source.hideImageContext !== 'boolean') invalid();
   const head = entries(source.head);
@@ -136,6 +137,7 @@ export function validateModelSettings(value: unknown): ModelSettings {
     maxTokens: number(source.maxTokens, 1, 65_536, true), temperature: number(source.temperature, 0, 2),
     transport: source.transport,
     thinkingMode: (source.thinkingMode as ModelThinkingMode | undefined) ?? 'default',
+    jsonOutput: source.jsonOutput === true,
     head, tail,
     enabledLayers, promptOrder, worldbookSource: 'uploads', worldbooks,
     presetName: source.presetName === undefined ? '' : text(source.presetName, 256),
@@ -151,9 +153,9 @@ export function modelPresetSettings(settings: ModelSettings): ModelPresetSetting
 
 export function modelSharedSettings(settings: ModelSettings): ModelSharedSettings {
   const { mode, url, key, model, models, maxTokens, temperature, transport, parseImageMarkers, hideImageContext } = settings;
-  const { thinkingMode } = settings;
+  const { thinkingMode, jsonOutput } = settings;
   return structuredClone({ mode, url, key, model, models, maxTokens, temperature, transport,
-    thinkingMode: thinkingMode ?? 'default', parseImageMarkers, hideImageContext });
+    thinkingMode: thinkingMode ?? 'default', jsonOutput: jsonOutput ?? false, parseImageMarkers, hideImageContext });
 }
 
 function defaultAllModelSettings(): AllModelSettings {
@@ -178,9 +180,7 @@ export function validateAllModelSettings(value: unknown): AllModelSettings {
   const parsed = {} as Record<ImageProvider, ModelPresetSettings>;
   let shared: ModelSharedSettings | null = null;
   for (const provider of IMAGE_PROVIDERS) {
-    // Gemini and Grok write natural-language prompts like GPT: start from the GPT preset when missing.
-    const raw = presets[provider] ?? (provider === 'gemini' || provider === 'grok' ? presets.openai : undefined);
-    const value = validateModelSettings({ ...record(raw), ...api, presetProvider: provider });
+    const value = validateModelSettings({ ...record(presets[provider]), ...api, presetProvider: provider });
     parsed[provider] = modelPresetSettings(value);
     shared ??= modelSharedSettings(value);
   }
@@ -209,7 +209,7 @@ export function modelSettingsForProvider(value: AllModelSettings, provider: Imag
 }
 export function hasSavedModelSettings(): boolean { return settingsStorage.hasSaved(); }
 
-/** A deleted book must disappear from both provider presets. */
+/** A deleted book must disappear from the saved preset. */
 export async function detachStoredWorldbook(name: string): Promise<void> {
   if (!hasSavedModelSettings()) return;
   await settingsStorage.update(settings => {

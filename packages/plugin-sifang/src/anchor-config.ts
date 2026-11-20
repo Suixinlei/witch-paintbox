@@ -7,7 +7,7 @@ import { imageHistoryPositive, onImageHistoryChanged } from './image-history.js'
 import { isServiceEditor } from './service-client.js';
 import { flushServiceConfig } from './service-config.js';
 import { watchChatRendering } from './chat-host.js';
-import { imageProviderName, isNaturalLanguageProvider, loadImageSettings } from './image-settings.js';
+import { loadImageSettings } from './image-settings.js';
 import { generatePreparedImage } from './image-provider.js';
 import { getHostStore } from './host-storage.js';
 import {
@@ -284,7 +284,7 @@ export class AnchorConfig {
         ${this.sourcePrompt ? `<details class="anchor-source"><summary>查看这张图片的完整生成 tag</summary><pre>${escape(this.sourcePrompt)}</pre></details>` : ''}
         <div class="anchor-negative">
           ${this.negativeExpanded ? `<label class="config-field"><span>角色负面提示词</span><textarea rows="3" data-anchor-field="negative" maxlength="${ANCHOR_TAG_LIMIT}" spellcheck="false" aria-describedby="anchor-negative-hint">${escape(draft.negative)}</textarea></label>
-            <div class="anchor-toolbar"><p class="config-status" id="anchor-negative-hint">NAI 单串生图时加入全局负面词；多角色分栏时只加入该角色栏。GPT 不支持独立负面词。</p><button type="button" class="text-button" data-anchor-action="remove-negative">移除负面提示词</button></div>`
+            <div class="anchor-toolbar"><p class="config-status" id="anchor-negative-hint">NAI 单串生图时加入全局负面词；多角色分栏时只加入该角色栏。</p><button type="button" class="text-button" data-anchor-action="remove-negative">移除负面提示词</button></div>`
             : '<button type="button" class="text-button" data-anchor-action="add-negative">添加负面提示词</button>'}
         </div>
         <section class="anchor-outfit-section"><div class="anchor-toolbar"><h3 class="subsection-title">服装库</h3><button type="button" class="text-button" data-anchor-action="add-outfit">＋ 添加服装</button></div>
@@ -630,9 +630,6 @@ export class AnchorConfig {
     try {
       if (!appearance.trim()) throw withFault(new Error('请先填写角色的固定外貌 tag。'), 'setup');
       const settings = loadImageSettings();
-      if (isNaturalLanguageProvider(settings.provider) && negative.trim()) {
-        throw withFault(new Error(`${imageProviderName(settings.provider)} 生图不支持角色独立负面提示词，请清空该角色的负面词或切换 NAI。`), 'setup');
-      }
       emitPetEvent({ type: 'image', id: pet, source: 'portrait', phase: 'start', provider: settings.provider, summary: draft.name });
       const positive = [settings.positive, appearance, outfitTags].map(part => part.trim()).filter(Boolean).join(', ');
       const combinedNegative = [settings.negative, negative].map(part => part.trim()).filter(Boolean).join(', ');

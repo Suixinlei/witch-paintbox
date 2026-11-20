@@ -28,7 +28,8 @@ const upstream = createServer(async (req, res) => {
     output = { choices: [{ message: { content: JSON.stringify([{ at, summary: '庭院', prompt: 'garden' }]) } }] };
   } else {
     if (pauseDraw) await pauseDraw();
-    output = { data: [{ b64_json: photo.toString('base64') }] };
+    res.writeHead(200, { 'Content-Type': 'image/jpeg' }).end(photo);
+    return;
   }
   res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(output));
 });
@@ -66,6 +67,11 @@ try {
   await admin.locator('#token').fill(token);
   await admin.getByRole('button', { name: '进入管理' }).click();
   const editor = admin.locator('#global-editor');
+  const adminHeaders = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
+  const seedCard = await fetch(service + '/v1/admin/risu/cards', { method: 'POST', headers: adminHeaders,
+    body: JSON.stringify({ revision: null, cards: [{ card: { chaId: 'fixture-card', name: '测试卡' },
+      library: { people: [], backgrounds: [] } }] }) });
+  assert.ok(seedCard.ok);
   const navigate = async name => {
     await admin.locator(`[data-dashboard-page="${name}"]`).click();
     await admin.locator(`[data-dashboard-page="${name}"][aria-current="page"]`).waitFor();
@@ -73,16 +79,16 @@ try {
   await admin.locator('#overview').waitFor();
   await navigate('image');
   await editor.locator('[data-image-settings] [data-connection="key"]').waitFor();
+  assert.equal(await editor.locator('[data-action="switch-provider"]').count(), 0);
   assert.equal((await (await fetch(service + '/v1/health', { headers: { Authorization: 'Bearer ' + token } })).json()).revision, null);
   await admin.evaluate(async upstream => {
     const images = await import('/dist/image-settings.js');
-    const image = images.defaultImageSettings('openai');
+    const image = images.defaultImageSettings('novelai');
     image.connection = { channel: 'custom', url: upstream + '/v1', key: 'fixture-image-key', appendSuffix: true };
-    image.openaiParameters.model = 'fixture-image';
+    image.artists = [{ id: 'ink', name: '水墨', positive: 'ink wash', negative: '' }];
     await images.saveImageSettings(image);
-    await images.switchImageProvider('openai');
     const model = await import('/dist/model-settings.js');
-    const settings = model.defaultModelSettings('openai');
+    const settings = model.defaultModelSettings('novelai');
     Object.assign(settings, { mode: 'tavern', transport: 'nonstream', enabledLayers: [],
       head: [{ id: 'test', name: 'test', role: 'system', enabled: true, content: 'Choose one marked position.' }],
       promptOrder: ['prompt:test', 'input'] });
@@ -101,6 +107,8 @@ try {
   const thinkingMode = modelFields.locator('[data-model-field="thinkingMode"]');
   await modelFields.locator('[data-model-field="url"]').fill('https://api.deepseek.com');
   await thinkingMode.selectOption('off');
+  const jsonOutput = modelFields.locator('[data-model-field="jsonOutput"]');
+  await jsonOutput.selectOption('json_object');
   const savedThinking = admin.waitForResponse(response => response.url() === service + '/v1/config' && response.request().method() === 'POST');
   await modelFields.locator('[data-model-action="save-model"]').click();
   assert.ok((await savedThinking).ok());
@@ -108,8 +116,10 @@ try {
   await admin.reload();
   await thinkingMode.waitFor();
   assert.equal(await thinkingMode.inputValue(), 'off');
+  assert.equal(await jsonOutput.inputValue(), 'json_object');
   await modelFields.locator('[data-model-field="url"]').fill(origin(upstream) + '/v1');
   assert.ok(await thinkingMode.isHidden());
+  assert.ok(await jsonOutput.isHidden());
   await modelFields.locator('[data-model-field="model"]').fill('fixture-local-model');
   await modelFields.locator('[data-model-action="save-model"]').click();
   await modelFields.locator('[data-model-status]').filter({ hasText: /^已保存。$/ }).waitFor();
@@ -148,6 +158,23 @@ try {
   await navigate('cards');
   await admin.locator('#cards').waitFor();
   assert.ok(await editor.isHidden());
+  await admin.locator('#risu-card').selectOption('fixture-card');
+  const artist = admin.getByLabel('NAI 画师预设');
+  await artist.selectOption('ink');
+  const saveCard = () => admin.getByRole('button', { name: '保存本卡资料' }).click();
+  const cardSaved = () => admin.locator('#card-status').getByText('已保存本卡资料。').waitFor();
+  await saveCard();
+  await cardSaved();
+  const reloadCard = () => admin.getByRole('button', { name: '重新读取本卡' }).click();
+  await reloadCard();
+  await artist.waitFor();
+  assert.equal(await artist.inputValue(), 'ink');
+  await artist.selectOption('');
+  await saveCard();
+  await cardSaved();
+  await reloadCard();
+  await artist.waitFor();
+  assert.equal(await artist.inputValue(), '');
   await admin.goBack();
   await prompt.waitFor();
   assert.equal(await prompt.inputValue(), 'Unsaved prompt draft');
@@ -253,7 +280,7 @@ try {
   assert.deepEqual(await page.evaluate(() => [...new Set(fixture.floorReadsAfterWrite)]), [1999]);
   assert.equal(await page.evaluate(() => fixture.markers.length), 1);
   assert.match(await page.evaluate(() => fixture.view.status), /已保存图片/);
-  assert.deepEqual(calls, ['/v1/chat/completions', '/v1/images/generations']);
+  assert.deepEqual(calls, ['/v1/chat/completions', '/v1/ai/generate-image']);
   assert.deepEqual(requests, ['/v1/plan']);
   assert.deepEqual(historyReads, []);
   assert.equal(await page.locator('.wp-gallery').count(), 0);
@@ -298,7 +325,7 @@ try {
   }), { effects: [], reads: 0, veiled: false });
   await admin.locator('#live-draw').getByText('执行中 0 · 等待 0').waitFor();
   assert.deepEqual(requests, ['/v1/plan', '/v1/images']);
-  assert.deepEqual(calls, ['/v1/chat/completions', '/v1/images/generations', '/v1/images/generations']);
+  assert.deepEqual(calls, ['/v1/chat/completions', '/v1/ai/generate-image', '/v1/ai/generate-image']);
   assert.deepEqual(errors, []);
   await admin.locator('#page-picker').selectOption('history');
   const preview = admin.locator('.history-item img').first();
@@ -375,7 +402,7 @@ try {
   await picker.getByRole('status').filter({ hasText: '已返回 1 张图片' }).waitFor();
   assert.deepEqual(await page.evaluate(() => [fixture.writes, fixture.floor.raw]), [2, latestRaw]);
   assert.match(await page.evaluate(() => fixture.history[1].raw), /^历史楼层 1\s*<img>/);
-  assert.equal(calls.at(-1), '/v1/images/generations');
+  assert.equal(calls.at(-1), '/v1/ai/generate-image');
   await page.waitForFunction(() => fixture.views['history-1']?.blob instanceof Blob);
 
   await floorChoice.selectOption({ label: '第 4 楼 · 测试' });

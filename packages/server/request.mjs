@@ -1,8 +1,35 @@
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { setTimeout as wait } from 'node:timers/promises';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { unpack, PACKET_TYPE } from '@witch-paintbox/plugin-sifang/runtime/service-protocol.js';
+import { ImageResponseError } from '@witch-paintbox/plugin-sifang/runtime/image-bytes.js';
+
+export const DRAW_INTERVAL_MS = 1500;
+const preConnectCodes = new Set(['EAI_AGAIN', 'ENOTFOUND', 'ECONNREFUSED', 'ENETUNREACH', 'EHOSTUNREACH', 'UND_ERR_CONNECT_TIMEOUT']);
+
+function failedBeforeSubmission(error) {
+  const cause = error?.cause;
+  return preConnectCodes.has(cause?.code)
+    || (cause?.code === 'ECONNRESET' && cause.message?.includes('before secure TLS connection was established'));
+}
+
+export async function fetchNovelAI(url, options) {
+  for (let attempt = 1; ; attempt++) {
+    options.signal.throwIfAborted();
+    try {
+      return await fetch(url, options);
+    } catch (error) {
+      options.signal.throwIfAborted();
+      if (!failedBeforeSubmission(error)) throw error;
+      if (attempt === 3) {
+        throw new ImageResponseError('连接 NovelAI 失败，已重试两次。请检查服务端到 NovelAI 的网络或代理。', 'network');
+      }
+      await wait(DRAW_INTERVAL_MS, undefined, { signal: options.signal });
+    }
+  }
+}
 
 export class RequestError extends Error {
   constructor(message, status = 400, fault = 'format') {

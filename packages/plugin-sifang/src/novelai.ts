@@ -161,6 +161,7 @@ export async function generateImage(
   onProgress?: (progress: ImageGenerationProgress) => void,
   characters: readonly CharacterPrompt[] = [],
   vibes: VibeReferences | null = null,
+  send: typeof fetch = fetch,
 ): Promise<{ blob: Blob; seed: number }> {
   if (signal.aborted) throw abortError();
   const configured = validateImageConnection(connection);
@@ -223,7 +224,7 @@ export async function generateImage(
     parameters.normalize_reference_strength_multiple = vibes.normalize;
   }
   const body = JSON.stringify({ input: positive, model: params.model, action: 'generate', parameters });
-  return queueImageGeneration(() => requestImage(configured, body, seed, signal), signal, onProgress);
+  return queueImageGeneration(() => requestImage(configured, body, seed, signal, send), signal, onProgress);
 }
 
 async function requestImage(
@@ -231,6 +232,7 @@ async function requestImage(
   body: string,
   seed: number,
   signal: AbortSignal,
+  send: typeof fetch,
 ): Promise<{ blob: Blob; seed: number }> {
   const controller = new AbortController();
   let interruption: Error | undefined;
@@ -251,7 +253,7 @@ async function requestImage(
   );
   try {
     ensureActive();
-    const response = await fetch(configured.channel === 'official' ? OFFICIAL_ENDPOINT : configured.url, {
+    const response = await send(configured.channel === 'official' ? OFFICIAL_ENDPOINT : configured.url, {
       method: 'POST', mode: 'cors', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
       headers: { Authorization: `Bearer ${configured.key}`, 'Content-Type': 'application/json', Accept: 'application/zip' },
       body,
@@ -271,7 +273,9 @@ async function requestImage(
   } catch (error) {
     if (interruption) throw interruption;
     if (error instanceof ImageResponseError) throw error;
-    return fail('生图未完成，请检查网络或浏览器跨域限制；没有自动重试。', 'network');
+    return fail(send === fetch
+      ? '生图未完成，请检查网络或浏览器跨域限制；没有自动重试。'
+      : '未能确认 NovelAI 是否接收了生图请求，服务未重复提交。请检查服务端网络或代理。', 'network');
   } finally {
     clearTimeout(timer);
     signal.removeEventListener('abort', cancel);

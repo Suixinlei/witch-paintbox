@@ -2,11 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as wait } from 'node:timers/promises';
 import { buildModelMessages } from '@witch-paintbox/plugin-sifang/runtime/feature-layers.js';
 import { imageSizeMode } from '@witch-paintbox/plugin-sifang/runtime/image-size-mode.js';
-import { parseImageSize } from '@witch-paintbox/plugin-sifang/runtime/image-size.js';
+import { imageSizeDimensions, parseImageSize } from '@witch-paintbox/plugin-sifang/runtime/image-size.js';
 import { markerEntries } from '@witch-paintbox/plugin-sifang/runtime/image-marker-history.js';
 import { modelSettingsForProvider } from '@witch-paintbox/plugin-sifang/runtime/model-settings.js';
 import { validateImageSettings } from '@witch-paintbox/plugin-sifang/runtime/image-settings.js';
-import { applyMarkerSize, prepareConfiguredPrompt, generatePreparedImage } from '@witch-paintbox/plugin-sifang/runtime/image-provider.js';
+import { drawNovelAI, prepareNovelAIPrompt } from '@witch-paintbox/plugin-sifang/runtime/novelai-draw.js';
 import { encodeVibe } from '@witch-paintbox/plugin-sifang/runtime/vibe-transfer.js';
 import { createImageQueue } from '@witch-paintbox/plugin-sifang/runtime/image-queue.js';
 import { createImageInsertionPlan, createSelectedImageInsertionPlan, selectImageInsertionPoints, applyImageInsertions } from '@witch-paintbox/plugin-sifang/runtime/image-insertion.js';
@@ -15,7 +15,7 @@ import { normalizeIllustrationItems } from '@witch-paintbox/plugin-sifang/runtim
 import { MAX_IMAGE_MARKERS, MAX_ORIGINAL_LENGTH, parseImageMarkers } from '@witch-paintbox/plugin-sifang/runtime/image-markers.js';
 import { packet } from '@witch-paintbox/plugin-sifang/runtime/service-protocol.js';
 import { requestServiceModel } from '@witch-paintbox/plugin-sifang/runtime/model-api.js';
-import { bounds, fetchLocalModel, historyDraft, invalid, object, RequestError, text } from './request.mjs';
+import { bounds, DRAW_INTERVAL_MS, fetchLocalModel, fetchNovelAI, historyDraft, invalid, object, RequestError, text } from './request.mjs';
 
 const MAX_PENDING_IMAGES = 12;
 const MAX_PENDING_PLANS = 12;
@@ -42,7 +42,7 @@ export function createImageJobs({ config, library, defaultModel }) {
       || draw.sourceName !== undefined && !text(draw.sourceName, 2048)
       || draw.dynamicSize !== undefined && typeof draw.dynamicSize !== 'boolean')) invalid();
     const snapshot = { ...configured(), ...cardLibrary };
-    const settings = modelSettingsForProvider(snapshot.model, snapshot.image.activeProvider);
+    const settings = modelSettingsForProvider(snapshot.model, 'novelai');
     if (cardLibrary) { settings.enabledLayers = [...new Set([...settings.enabledLayers, 'anchors'])]; if (!settings.promptOrder.includes('layer:anchors')) settings.promptOrder.push('layer:anchors'); }
     if (!settings.parseImageMarkers || ![...settings.head, ...settings.tail].some(entry => entry.enabled && !entry.marker && entry.content.trim())) {
       throw new RequestError('请先在服务配置中保存正文处理预设并开启解析配图标记。', 400, 'setup');
@@ -83,25 +83,27 @@ export function createImageJobs({ config, library, defaultModel }) {
     const markers = markerEntries({ ...draw, messageId: 0, swipeId: null, turnId: null, text: plan.text })
       .filter(entry => positions.has(entry.marker.start));
     if (markers.length !== plan.added.length) throw new RequestError('无法确认新配图标记的历史标识。', 500);
-    const pictures = [];
+    signal.throwIfAborted();
     const blobs = [];
     const delay = draw.delay * 1000;
-    for (const { marker, historyKey } of markers) {
-      signal.throwIfAborted();
-      if (delay) await wait(delay, undefined, { signal });
+    const batchTiming = { delay, readyAt: performance.now() + delay };
+    const full = imageQueueFull();
+    // Reserve the batch together so each image has its own FIFO position.
+    const pictures = await Promise.all(markers.map(async ({ marker, historyKey }) => {
       try {
+        if (full) throw queueFullError();
         const size = draw.dynamicSize === false ? undefined : marker.size;
-        const { result, blob, history } = await queueDraw({ input: { scene: marker.prompt, size },
+        const { result, blob, history } = await scheduleDraw({ input: { scene: marker.prompt, size },
           history: { id: randomUUID(), markerKey: historyKey, title: marker.summary, scenePrompt: marker.prompt, sourceName: draw.sourceName },
-        }, snapshot, signal);
+        }, snapshot, signal, batchTiming);
         const entry = { ...result, id: history.id, markerKey: historyKey, createdAt: history.createdAt,
           title: marker.summary, scenePrompt: marker.prompt, sourceName: draw.sourceName };
-        pictures.push({ start: marker.start, markerKey: historyKey, entry, blobIndex: blobs.push(blob) - 1, error: history.error });
+        return { start: marker.start, markerKey: historyKey, entry, blobIndex: blobs.push(blob) - 1, error: history.error };
       } catch (error) {
         signal.throwIfAborted();
-        pictures.push({ start: marker.start, markerKey: historyKey, error: error?.fault ? error.message : '本张配图未完成，可在画框中手动重试。' });
+        return { start: marker.start, markerKey: historyKey, error: error?.fault ? error.message : '本张配图未完成，可在画框中手动重试。' };
       }
-    }
+    }));
     return packet({ ...plan, pictures }, blobs);
   }
 
@@ -109,31 +111,37 @@ export function createImageJobs({ config, library, defaultModel }) {
     if (!object(data) || !object(data.input)) invalid();
     const { input } = data;
     const draft = data.history === undefined ? undefined : historyDraft(data.history);
-    const { activeProvider, profiles } = snapshot.image;
-    let settings = profiles[activeProvider];
+    let settings = snapshot.image.profiles.novelai;
+    const size = parseImageSize(input.size);
+    if (input.size !== undefined && !size) invalid();
     let prompt;
     if ('scene' in input) {
-      if (!text(input.scene, 1_048_576) || input.size !== undefined && !parseImageSize(input.size)) invalid();
+      if (!text(input.scene, 1_048_576)) invalid();
+      const artistId = snapshot.artistPresetIds?.novelai;
+      const artist = settings.artists.find(preset => preset.id === artistId);
+      if (artist && !input.workshop) settings = { ...settings, positive: artist.positive, negative: artist.negative };
       if (input.workshop !== undefined) {
         if (!object(input.workshop)) invalid();
-        const { parameters, openaiParameters, geminiParameters, grokParameters, negative } = input.workshop;
-        settings = validateImageSettings({ ...settings, parameters, openaiParameters, geminiParameters, grokParameters, negative });
+        const { parameters, negative } = input.workshop;
+        settings = validateImageSettings({ ...settings, parameters, negative });
       }
-      const model = modelSettingsForProvider(snapshot.model, settings.provider);
-      settings = applyMarkerSize(settings, parseImageSize(input.size), imageSizeMode(model) === 'ai');
-      prompt = await prepareConfiguredPrompt(settings, input.scene, input.workshop ? '' : settings.positive,
+      const model = modelSettingsForProvider(snapshot.model, 'novelai');
+      if (size && imageSizeMode(model) === 'ai') {
+        settings = { ...settings, parameters: { ...settings.parameters, ...imageSizeDimensions(size) } };
+      }
+      prompt = await prepareNovelAIPrompt(settings, input.scene, input.workshop ? '' : settings.positive,
         { anchors: snapshot.anchors, outfits: snapshot.sharedOutfits });
     } else {
       prompt = input.prompt;
       if (!object(prompt) || !text(prompt.positive, 1_048_576) || !text(prompt.negative, 1_048_576)
         || !Array.isArray(prompt.characters) || prompt.characters.length > 22
         || prompt.characters.some(item => !object(item) || !text(item.positive, 1_048_576) || !text(item.negative, 1_048_576))
-        || input.size !== undefined && !parseImageSize(input.size)) invalid();
-      settings = applyMarkerSize(settings, parseImageSize(input.size), true);
+       ) invalid();
+      if (size) settings = { ...settings, parameters: { ...settings.parameters, ...imageSizeDimensions(size) } };
     }
-    const { blob, ...result } = await generatePreparedImage(settings, prompt, signal, undefined, {
+    const { blob, ...result } = await drawNovelAI(settings, prompt, signal, undefined, {
       state: snapshot.vibes, encode: (connection, image, model, amount, job) => library.cachedEncoding(connection, image, model, amount, job, encodeVibe),
-    });
+    }, fetchNovelAI);
     signal.throwIfAborted();
     if (!draft) return { result, blob };
     const createdAt = Date.now();
@@ -146,15 +154,31 @@ export function createImageJobs({ config, library, defaultModel }) {
     return { result, history, blob };
   }
 
-  let pendingImages = 0;
+  let nextDrawAt = 0;
+  const queueFullError = () => new RequestError('独立服务生图队列已满，请稍后手动重试。', 429, 'busy');
+  const imageQueueFull = () => {
+    const { active, queued } = draws.state();
+    return active + queued >= MAX_PENDING_IMAGES;
+  };
+
+  function scheduleDraw(data, snapshot, signal, batchTiming) {
+    return draws.enqueue(async () => {
+      const delay = Math.max(nextDrawAt, batchTiming?.readyAt ?? 0) - performance.now();
+      if (delay > 0) await wait(Math.ceil(delay), undefined, { signal });
+      signal.throwIfAborted();
+      // A caller's disconnect does not free a slot after the provider request starts.
+      try { return await generate(data, snapshot, AbortSignal.timeout(DRAW_TIMEOUT_MS)); }
+      finally {
+        const finishedAt = performance.now();
+        nextDrawAt = finishedAt + DRAW_INTERVAL_MS;
+        if (batchTiming) batchTiming.readyAt = finishedAt + batchTiming.delay;
+      }
+    }, signal);
+  }
 
   async function queueDraw(data, snapshot, signal) {
-    if (pendingImages >= MAX_PENDING_IMAGES) throw new RequestError('独立服务生图队列已满，请稍后手动重试。', 429, 'busy');
-    pendingImages++;
-    // A cancelled caller leaves the queue immediately if waiting. Once an upstream
-    // draw starts, keep the slot until it settles because disconnecting cannot undo it.
-    try { return await draws.enqueue(() => generate(data, snapshot, AbortSignal.timeout(DRAW_TIMEOUT_MS)), signal); }
-    finally { pendingImages--; }
+    if (imageQueueFull()) throw queueFullError();
+    return scheduleDraw(data, snapshot, signal);
   }
 
   return {

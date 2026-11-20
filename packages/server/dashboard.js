@@ -35,6 +35,7 @@ function rememberToken(value) {
 let risuState;
 let cardDraft;
 let cardRequest;
+let artistPresets;
 let historyRequest;
 let historyCursor;
 let historyUrls = [];
@@ -145,11 +146,39 @@ function editable(label, record, key, multiline = false) {
   return wrapper;
 }
 
+function fieldsForArtistPresets(entry) {
+  const label = node('label', 'NAI 画师预设');
+  const select = node('select');
+  const presets = artistPresets?.novelai ?? [];
+  const selected = entry.artistPresetIds?.novelai ?? '';
+  select.append(new Option('沿用全局画师词', ''), ...presets.map(({ id, name }) => new Option(name, id)));
+  if (selected && !presets.some(({ id }) => id === selected)) {
+    select.append(new Option(artistPresets ? '预设已不可用（沿用全局画师词）' : '已绑定预设', selected));
+  }
+  select.value = selected;
+  select.disabled = !artistPresets;
+  select.addEventListener('change', () => {
+    if (select.value) entry.artistPresetIds = { novelai: select.value };
+    else delete entry.artistPresetIds;
+  });
+  label.append(select);
+  byId('card-artist-presets').replaceChildren(label);
+}
+
+async function loadArtistPresets() {
+  try {
+    artistPresets = await json('admin/risu/artist-presets');
+    if (cardDraft) fieldsForArtistPresets(cardDraft.entry);
+    status('card-artist-status');
+  } catch (error) { status('card-artist-status', error.message, true); }
+}
+
 function fieldsForCard(entry) {
   const { card, library } = entry;
   cardForm.elements.cardName.value = card.name;
   cardForm.elements.description.value = card.desc ?? '';
   cardForm.elements.scenario.value = card.scenario ?? '';
+  fieldsForArtistPresets(entry);
   const people = promptGroup(`人物 Prompt · ${library.people.length} 人`);
   for (const person of library.people) {
     const group = promptGroup(person.name);
@@ -347,6 +376,7 @@ function showPage(focus = false) {
   byId('global-editor').dataset.page = page;
   byId('risu-workflow').hidden = page !== 'workflow';
   for (const section of ['overview', 'cards', 'history']) byId(section).hidden = section !== page;
+  if (page === 'cards') void loadArtistPresets();
   if (focus) {
     heading.focus({ preventScroll: true });
     window.scrollTo(0, 0);
@@ -385,6 +415,7 @@ async function refresh() {
     status('error');
   } catch (error) { status('error', error.message, true); }
   if (!risuState) await loadRisu();
+  if (activePage === 'cards') await loadArtistPresets();
 }
 
 const deny = error => error.status === 401 || error.status === 403;

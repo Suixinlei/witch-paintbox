@@ -465,8 +465,13 @@ export async function requestServiceModel(settings: ModelApiSettings, messages: 
   const hostname = new URL(String(custom_url)).hostname;
   const local = ['127.0.0.1', 'localhost', '[::1]'].includes(hostname);
   const disableThinking = local && model === 'huihui-ai/huihui-qwen3.8-27b-abliterated';
-  const wireMessages = envelope?.messages ?? (local ? localTemplateMessages(messages) : messages);
-  const thinking = supportsDeepSeekThinking(String(custom_url)) ? settings.thinkingMode : undefined;
+  const deepSeek = supportsDeepSeekThinking(String(custom_url));
+  const jsonOutput = deepSeek && settings.jsonOutput && !envelope;
+  const wireMessages = envelope?.messages ?? (local ? localTemplateMessages(messages) : jsonOutput ? [...messages, {
+    role: 'user',
+    content: '最终输出格式：只返回一个 JSON 对象。把前面要求的配图数组放进 images 字段，例如 {"images":[{"at":"P001","summary":"桥上等候","prompt":"a messenger on a misty stone bridge"}]}。示例仅用于说明结构；使用正文中实际可用的插入点。数组条目的字段、提示词、画幅与数量要求保持有效。如果前面的规则允许返回零张，返回 {"images":[]}。不要添加 Markdown 围栏、解释或正文。',
+  }] : messages);
+  const thinking = deepSeek ? settings.thinkingMode : undefined;
   const thinkingOptions = thinking === 'off' ? { thinking: { type: 'disabled' } }
     : thinking === 'low' ? { thinking: { type: 'enabled' }, reasoning_effort: 'low' } : {};
   return withRequest(signal, local ? 900_000 : 300_000, async requestSignal => {
@@ -474,6 +479,7 @@ export async function requestServiceModel(settings: ModelApiSettings, messages: 
       model, messages: wireMessages, stream: settings.transport !== 'nonstream',
       max_tokens: settings.maxTokens, temperature: settings.temperature,
       ...thinkingOptions,
+      ...(jsonOutput ? { response_format: { type: 'json_object' } } : {}),
       ...(disableThinking ? { reasoning_effort: 'none', chat_template_kwargs: { enable_thinking: false } } : {}),
       ...(envelope ? { tools: envelope.tools, tool_choice: 'required' } : {}),
     };
