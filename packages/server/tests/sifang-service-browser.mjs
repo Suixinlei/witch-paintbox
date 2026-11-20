@@ -180,20 +180,29 @@ try {
     const listeners = new Map();
     const context = { extensionSettings: {}, characterId: 0, characters: [{ name: '测试', avatar: 'fixture.png' }] };
     const raw = '她走进庭院。\n\n月光照在水面。';
-    const floor = { saveId: 'fixture-save', volume: null, floor: 0, node: 'fixture-node', role: 'assistant', name: '测试',
+    const floor = { saveId: 'fixture-save', volume: null, floor: 1999, node: 'fixture-node', role: 'assistant', name: '测试',
       raw, text: raw, paras: [], status: 'ready', busy: false, version: 1, count: 1 };
-    window.fixture = { floor, context, writes: 0, markers: [], view: null, notices: [],
+    const history = Array.from({ length: floor.floor }, (_, index) => ({
+      ...floor, floor: index, node: `history-${index}`, role: index % 2 ? 'assistant' : 'user',
+      raw: `历史楼层 ${index}`, text: `历史楼层 ${index}`,
+    }));
+    const line = [...history, floor].map(({ floor, node, role }) => ({ floor, node, role }));
+    window.fixture = { floor, context, writes: 0, floorReadsAfterWrite: [], markers: [], view: null, notices: [],
       emit(name, value) { for (const callback of listeners.get(name) ?? []) callback(value); } };
     window.Sifang = {
       apiVersion: 1, capabilities: ['native-game', 'native-events', 'native-text-write', 'native-image-markers'],
       game: {
-        async floor() { return { ...floor }; },
-        async floors() { return [{ node: floor.node, floor: floor.floor, role: floor.role }]; },
+        async floor(index = floor.floor) {
+          if (fixture.writes) fixture.floorReadsAfterWrite.push(index);
+          return { ...(index === floor.floor ? floor : history[index]) };
+        },
+        async floors() { return line; },
         async save() { return { id: floor.saveId, name: 'Fixture', volume: null }; },
         async replaceText({ expectedRaw, raw }) {
           if (expectedRaw !== floor.raw) throw new Error('stale floor');
           fixture.writes++;
           floor.raw = floor.text = raw;
+          fixture.emit('edit', { saveId: floor.saveId, volume: floor.volume, node: floor.node, floor: floor.floor });
           return { ...floor };
         },
       },
@@ -238,6 +247,7 @@ try {
     throw error;
   }
   assert.equal(await page.evaluate(() => fixture.writes), 1);
+  assert.deepEqual(await page.evaluate(() => [...new Set(fixture.floorReadsAfterWrite)]), [1999]);
   assert.equal(await page.evaluate(() => fixture.markers.length), 1);
   assert.match(await page.evaluate(() => fixture.view.status), /已保存图片/);
   assert.deepEqual(calls, ['/v1/chat/completions', '/v1/images/generations']);

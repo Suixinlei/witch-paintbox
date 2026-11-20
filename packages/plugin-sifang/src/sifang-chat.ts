@@ -17,6 +17,7 @@ let revision = 0;
 let lifecycle: AbortSignal | undefined;
 let initializing: Promise<void> | undefined;
 let currentRefresh: { promise: Promise<void>; settled: boolean } | undefined;
+let needsFullRefresh = true;
 
 function chatId(value: SifangSave): string { return JSON.stringify(['sifang', value.id, value.volume]); }
 function sameSave(a: SifangSave, b: SifangSave): boolean { return a.id === b.id && a.volume === b.volume; }
@@ -49,6 +50,8 @@ function emit(messageId?: number, event?: string): void {
 }
 
 function refresh(event: string, messageId?: number): Promise<void> {
+  if (event === 'MESSAGE_UPDATED' && messageId !== undefined) invalidFloors.add(messageId);
+  else needsFullRefresh = true;
   const pending = { promise: readFloors(event, messageId), settled: false };
   currentRefresh = pending;
   void pending.promise.then(() => { pending.settled = true; }, () => { pending.settled = true; });
@@ -71,7 +74,17 @@ async function readFloors(event: string, messageId?: number): Promise<void> {
     emit(undefined, 'CHAT_CHANGED');
   }
   const line = await host.game.floors();
-  const loaded = await Promise.all(line.map(item => host.game.floor(item.floor)));
+  if (lifecycle?.aborted || ticket !== revision) return;
+  // A text edit keeps the same floor layout. Reuse other bodies only when the
+  // active save and the host's floor list still match the cached layout.
+  const cached = new Map(floors.map(floor => [floor.floor, floor]));
+  const sameLayout = !needsFullRefresh && valid && save && sameSave(save, before)
+    && line.length === floors.length && line.every(item => {
+      const floor = cached.get(item.floor);
+      return floor?.node === item.node && floor.role === item.role;
+    });
+  const loaded = await Promise.all(line.map(item => sameLayout && !invalidFloors.has(item.floor) && !invalidNodes.has(item.node)
+    ? cached.get(item.floor)! : host.game.floor(item.floor)));
   const after = await host.game.save();
   if (lifecycle?.aborted || ticket !== revision) return;
   if (!after || !sameSave(before, after)) {
@@ -89,6 +102,7 @@ async function readFloors(event: string, messageId?: number): Promise<void> {
   save = after;
   identity = characterIdentity();
   valid = true;
+  needsFullRefresh = false;
   streaming = activity !== seenActivity || next.some(floor => floor.busy);
   invalidNodes.clear(); invalidFloors.clear();
   emit(messageId, switched ? 'CHAT_CHANGED' : event);
@@ -108,7 +122,8 @@ export async function initializeSifangChat(signal: AbortSignal): Promise<void> {
     if (signal.aborted) return;
     ++activity;
     const data = payload as { floor?: unknown; node?: unknown; removed?: unknown; saveId?: unknown; volume?: unknown } | null;
-    const messageId = data?.floor;
+    const messageId = typeof data?.floor === 'number' ? data.floor
+      : native === 'edit' && typeof data?.node === 'string' ? floors.find(floor => floor.node === data.node)?.floor : undefined;
     const changedSave = save && (data?.saveId && data.saveId !== save.id
       || data && 'volume' in data && data.volume !== save.volume);
     if (native === 'save' || changedSave) {
@@ -117,11 +132,11 @@ export async function initializeSifangChat(signal: AbortSignal): Promise<void> {
     } else if (native === 'edit' || native === 'swipe' || native === 'remove') {
       // Only the changed floor is unavailable during its read. Other floors'
       // queued images keep their valid identity and are not cancelled.
-      if (typeof messageId === 'number') invalidFloors.add(messageId);
+      if (messageId !== undefined) invalidFloors.add(messageId);
       if (typeof data?.node === 'string') invalidNodes.add(data.node);
       if (Array.isArray(data?.removed)) data.removed.forEach(node => { if (typeof node === 'string') invalidNodes.add(node); });
     }
-    void refresh(event, typeof messageId === 'number' ? messageId : undefined)
+    void refresh(event, messageId)
       .catch(error => { if (!signal.aborted) void host.ui.toast(error instanceof Error ? error.message : '正文同步失败。', 'fail').catch(() => {}); });
   }));
   unsubs.push(host.on('stream', () => { if (!signal.aborted) { streaming = true; ++activity; } }));
