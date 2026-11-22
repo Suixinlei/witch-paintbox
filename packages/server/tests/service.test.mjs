@@ -32,6 +32,24 @@ test('Risu planning output keeps environmental tags global and expands unambiguo
   assert.deepEqual(prepared.characters.map(character => character.positive), ['white hair, holding a lantern', 'black hair, walking']);
 });
 
+test('reserved 无服装 works as a shared-outfit token while unknown names still fail', async () => {
+  const anchors = [{
+    id: 'sali', name: '莎莉', aliases: [], appearance: 'silver hair', negative: '',
+    outfits: [{ id: 'daily', name: '日常装', tags: 'school uniform' }], selectedOutfitId: 'daily',
+  }];
+  const outfits = [{ id: 'travel', name: '旅行装', tags: 'travel dress' }];
+  const library = { anchors, outfits };
+  const viaShared = await prepareImagePrompt('garden | @莎莉, #无服装', '', '', 22, library);
+  assert.ok(viaShared.characters[0].positive.includes('silver hair'));
+  assert.ok(!viaShared.characters[0].positive.includes('school uniform'));
+  assert.ok(!viaShared.positive.includes('无服装') && !viaShared.characters[0].positive.includes('无服装'));
+  const viaColon = await prepareImagePrompt('garden | @莎莉:无服装', '', '', 22, library);
+  assert.ok(!viaColon.characters[0].positive.includes('school uniform'));
+  const dressed = await prepareImagePrompt('garden | @莎莉, #旅行装', '', '', 22, library);
+  assert.ok(dressed.characters[0].positive.includes('travel dress'));
+  await assert.rejects(prepareImagePrompt('garden | @莎莉, #不存在的服装', '', '', 22, library), /不存在/);
+});
+
 test('standalone service plans once, returns a binary image once and keeps history across restart', { timeout: 65000 }, async () => {
   const jpeg = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#aa5c72' } }).jpeg().toBuffer();
   const calls = [];

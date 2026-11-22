@@ -98,8 +98,9 @@ export function resolveAnchorPromptFields(prompt: string, anchors: readonly Char
   const shared = new Map(sharedOutfits.map(outfit => [outfit.name, outfit]));
   let omitDefault = false;
   mapTags(prompt, (token, _nested, active) => {
+    const bare = token.startsWith('#') ? referenceName(token.slice(1).trim()) : '';
     if (active && (alternateClothing.has(token.toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' '))
-      || (token.startsWith('#') && shared.has(referenceName(token.slice(1).trim()))))) omitDefault = true;
+      || (token.startsWith('#') && (bare === '无服装' || shared.has(bare))))) omitDefault = true;
     return token;
   });
 
@@ -120,10 +121,13 @@ export function resolveAnchorPromptFields(prompt: string, anchors: readonly Char
   const negatives: string[] = [];
   const positive = mapTags(prompt, (token, nested, active) => {
     if (token.startsWith('#')) {
-      const outfit = shared.get(referenceName(token.slice(1).trim()));
+      const body = referenceName(token.slice(1).trim());
+      const outfit = shared.get(body);
       if (outfit) return outfit.tags;
+      // The reserved no-outfit word also works alone: character references keep only their appearance.
+      if (body === '无服装') return '';
       // A pre-existing literal name beginning with # keeps its legacy meaning.
-      if (nested || !reference(token, false)) throw withFault(new Error(`通用服装“${token.slice(1).trim() || '（空）'}”不存在，请检查标签。`), 'reference');
+      if (nested || !reference(token, false)) throw withFault(new Error(`通用服装“${body || '（空）'}”不存在，请检查标签。`), 'reference');
     }
     const prefixed = token.startsWith('@');
     const match = prefixed ? reference(token, true) ?? (!nested ? reference(token, false) : null)
