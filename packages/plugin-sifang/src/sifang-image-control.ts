@@ -73,11 +73,12 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
     for (const item of old.values()) URL.revokeObjectURL(item.url);
   }
   async function openHistory() {
-    if (!displayed || gallery || controller.signal.aborted) return;
+    if ((!displayed && !savedShown) || gallery || controller.signal.aborted) return;
     const open = new AbortController();
     const view = createImageGallery(entry.marker.summary, open.signal, {
       onSelect(id) {
         displayed = gallery?.items.find(item => item.entry.id === id)?.entry;
+        savedShown = Boolean(displayed);
         show();
       },
       async onDelete(id) {
@@ -88,7 +89,7 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
     const current = { view, controller: open, items: [] as GalleryImage[] };
     gallery = current;
     root.append(view.element);
-    showHistory(current, [displayed]);
+    if (displayed) showHistory(current, [displayed]);
     view.open();
     view.element.addEventListener('close', closeGallery, { signal: open.signal, once: true });
     if (!historyKey) return;
@@ -135,6 +136,7 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
 
   /** The batch loader injects the saved picture here; a failure keeps automatic draws from billing twice. */
   let settled = false;
+  let savedShown = false;
   let settleReady!: () => void;
   const ready = new Promise<void>(resolve => { settleReady = resolve; });
   function restore(entry: ImageHistoryEntry | undefined, failure?: string): void {
@@ -143,7 +145,18 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
     settleReady();
     historyAvailable = failure === undefined;
     if (!displayed) displayed = entry;
+    savedShown = Boolean(displayed);
     if (!request) report(failure ?? (displayed ? savedText : ''));
+    else show();
+  }
+  /** Historical floors only learn whether a picture exists; the image loads when the user opens it. */
+  function restoreSaved(saved: boolean, failure?: string): void {
+    if (settled || controller.signal.aborted) return;
+    settled = true;
+    settleReady();
+    historyAvailable = failure === undefined;
+    savedShown = saved && failure === undefined;
+    if (!request) report(failure ?? (savedShown ? savedText : ''));
     else show();
   }
   async function refreshLatest() {
@@ -251,7 +264,7 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
     generate,
     async generateAutomatically(signal: AbortSignal) {
       await ready;
-      if (signal.aborted || !historyAvailable || displayed || request) return;
+      if (signal.aborted || !historyAvailable || displayed || savedShown || request) return;
       await generate(signal);
     },
     cancel() { request?.abort(); },
@@ -259,6 +272,7 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
     removeHistory: remove,
     refresh: show,
     restore,
+    restoreSaved,
     dispose() {
       if (!settled) { settled = true; settleReady(); }
       controller.abort(); closeGallery();

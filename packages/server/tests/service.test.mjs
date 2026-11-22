@@ -289,6 +289,14 @@ test('standalone service plans once, returns a binary image once and keeps histo
     assert.deepEqual(grouped.value.groups[0].entries, []);
     assert.equal(grouped.value.groups[1].entries[0].markerKey, batchKey);
     assert.equal(grouped.blobs.length, 1);
+    const meta = await unpack(await (await send('history/marker', { markerKeys: [markerKey, batchKey], latest: true, embed: false })).blob());
+    assert.equal(meta.value.groups.length, 2);
+    assert.deepEqual(meta.value.groups[0].entries, []);
+    assert.equal(meta.value.groups[1].entries[0].markerKey, batchKey);
+    assert.equal(meta.blobs.length, 0);
+    const manyKeys = Array.from({ length: 512 }, (_, index) => `missing-${index}`);
+    assert.equal((await unpack(await (await send('history/marker', { markerKeys: manyKeys, latest: true, embed: false })).blob())).value.groups.length, 512);
+    assert.equal((await send('history/marker', { markerKeys: [...manyKeys, 'one-too-many'], latest: true, embed: false })).status, 400);
     assert.equal((await send('history/marker', { markerKeys: [markerKey, batchKey], latest: false })).status, 400);
     assert.equal((await send('history/marker', { markerKeys: [], latest: true })).status, 400);
     assert.equal((await send('history/marker', { markerKeys: [markerKey, markerKey], latest: true })).status, 400);

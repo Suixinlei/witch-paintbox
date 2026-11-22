@@ -58,12 +58,13 @@ export function createSifangImageControl(entry, root, hooks, initial) {
             URL.revokeObjectURL(item.url);
     }
     async function openHistory() {
-        if (!displayed || gallery || controller.signal.aborted)
+        if ((!displayed && !savedShown) || gallery || controller.signal.aborted)
             return;
         const open = new AbortController();
         const view = createImageGallery(entry.marker.summary, open.signal, {
             onSelect(id) {
                 displayed = gallery?.items.find(item => item.entry.id === id)?.entry;
+                savedShown = Boolean(displayed);
                 show();
             },
             async onDelete(id) {
@@ -76,7 +77,8 @@ export function createSifangImageControl(entry, root, hooks, initial) {
         const current = { view, controller: open, items: [] };
         gallery = current;
         root.append(view.element);
-        showHistory(current, [displayed]);
+        if (displayed)
+            showHistory(current, [displayed]);
         view.open();
         view.element.addEventListener('close', closeGallery, { signal: open.signal, once: true });
         if (!historyKey)
@@ -133,6 +135,7 @@ export function createSifangImageControl(entry, root, hooks, initial) {
     }
     /** The batch loader injects the saved picture here; a failure keeps automatic draws from billing twice. */
     let settled = false;
+    let savedShown = false;
     let settleReady;
     const ready = new Promise(resolve => { settleReady = resolve; });
     function restore(entry, failure) {
@@ -143,8 +146,22 @@ export function createSifangImageControl(entry, root, hooks, initial) {
         historyAvailable = failure === undefined;
         if (!displayed)
             displayed = entry;
+        savedShown = Boolean(displayed);
         if (!request)
             report(failure ?? (displayed ? savedText : ''));
+        else
+            show();
+    }
+    /** Historical floors only learn whether a picture exists; the image loads when the user opens it. */
+    function restoreSaved(saved, failure) {
+        if (settled || controller.signal.aborted)
+            return;
+        settled = true;
+        settleReady();
+        historyAvailable = failure === undefined;
+        savedShown = saved && failure === undefined;
+        if (!request)
+            report(failure ?? (savedShown ? savedText : ''));
         else
             show();
     }
@@ -275,7 +292,7 @@ export function createSifangImageControl(entry, root, hooks, initial) {
         generate,
         async generateAutomatically(signal) {
             await ready;
-            if (signal.aborted || !historyAvailable || displayed || request)
+            if (signal.aborted || !historyAvailable || displayed || savedShown || request)
                 return;
             await generate(signal);
         },
@@ -284,6 +301,7 @@ export function createSifangImageControl(entry, root, hooks, initial) {
         removeHistory: remove,
         refresh: show,
         restore,
+        restoreSaved,
         dispose() {
             if (!settled) {
                 settled = true;

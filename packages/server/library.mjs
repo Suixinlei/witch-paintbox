@@ -120,8 +120,9 @@ export async function openLibrary(directory) {
       const entries = Array.from(index.values()).filter(entry => entry.markerKey === key).sort(compare);
       return pack(onlyLatest ? entries.slice(-1) : entries);
     },
-    /** One latest image per requested key, so a page refresh restores markers in a few calls. */
-    async markers(keys) {
+    /** One latest image per requested key, so a page refresh restores markers in a few calls.
+     * Metadata-only mode skips the file reads entirely for historical floors. */
+    async markers(keys, embed = true) {
       const newest = new Map(keys.map(key => [key, null]));
       for (const entry of index.values()) {
         if (!newest.has(entry.markerKey)) continue;
@@ -134,15 +135,20 @@ export async function openLibrary(directory) {
         const entry = newest.get(key);
         const group = { markerKey: key, entries: [] };
         if (entry) {
-          try {
-            const { blobs: stored } = await unpack(await openAsBlob(join(images, entry.filename)));
-            if (stored.length === 1) {
-              blobs.push(new Blob([await stored[0].arrayBuffer()], { type: stored[0].type }));
-              const { filename: _, ...metadata } = entry;
-              group.entries.push(metadata);
+          if (!embed) {
+            const { filename: _, ...metadata } = entry;
+            group.entries.push(metadata);
+          } else {
+            try {
+              const { blobs: stored } = await unpack(await openAsBlob(join(images, entry.filename)));
+              if (stored.length === 1) {
+                blobs.push(new Blob([await stored[0].arrayBuffer()], { type: stored[0].type }));
+                const { filename: _, ...metadata } = entry;
+                group.entries.push(metadata);
+              }
+            } catch (error) {
+              if (error.code !== 'ENOENT') throw error;
             }
-          } catch (error) {
-            if (error.code !== 'ENOENT') throw error;
           }
         }
         groups.push(group);

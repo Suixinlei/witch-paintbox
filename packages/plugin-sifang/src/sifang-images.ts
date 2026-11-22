@@ -4,7 +4,8 @@ import { markerEntries, type MarkerEntry, type AssistantImageMessage } from './i
 import { automaticImages } from './automatic-images.js';
 import { onImageHistoryChanged, type ImageHistoryEntry } from './image-history.js';
 import { createSifangImageControl, type NativeImageView } from './sifang-image-control.js';
-import { readServiceMarkerLatest } from './service-client.js';
+import { readServiceMarkerLatest, readServiceMarkerSaved } from './service-client.js';
+import type { WireHistoryEntry } from './service-protocol.js';
 import { sifangHost, type SifangFloor } from './sifang-host.js';
 import { readSifangFloor, readSifangFloors, isSifangFloorPending } from './sifang-chat.js';
 import { clearSifangBatch, sifangBatchPicture } from './sifang-batch.js';
@@ -98,47 +99,67 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
     return `wp-${Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('')}`;
   }
 
-  /** Restoring a whole chat used to cost one request per marker; chunks plus this cache keep refreshes light. */
+  /** Restoring a whole chat used to cost one request per marker; with thousands of floors even
+   * batched pictures would exhaust memory, so only the latest floor moves image bytes. */
   const restored = new Map<string, ImageHistoryEntry | undefined>();
-  const waitingKeys = new Set<string>();
+  const saved = new Map<string, WireHistoryEntry | undefined>();
+  const embedKeys = new Set<string>();
+  const metaKeys = new Set<string>();
   const waitingControls = new Map<string, Set<NativeControl>>();
   let loading = false;
   let loadTimer: ReturnType<typeof setTimeout> | undefined;
-  const CHUNK = 12;
+  const EMBED_CHUNK = 12;
+  const META_CHUNK = 256;
   function wantLatest(item: NativeControl): void {
     const key = item.entry.historyKey;
     if (!key) { item.control.restore(undefined); return; }
     if (restored.has(key)) { item.control.restore(restored.get(key)); return; }
+    if (saved.has(key)) { item.control.restoreSaved(saved.get(key) !== undefined); return; }
     const waiters = waitingControls.get(key);
     if (waiters) { waiters.add(item); return; } // Already queued or in flight.
     waitingControls.set(key, new Set([item]));
-    waitingKeys.add(key);
+    (item.message.messageId === imageChatContext()?.latestMessageId ? embedKeys : metaKeys).add(key);
     if (!loading && loadTimer === undefined) loadTimer = setTimeout(() => { loadTimer = undefined; void load(); }, 60);
   }
   async function load(): Promise<void> {
     if (loading || signal.aborted) return;
     loading = true;
     try {
-      while (!signal.aborted && waitingKeys.size) {
-        const chunk = [...waitingKeys].slice(0, CHUNK);
-        chunk.forEach(key => waitingKeys.delete(key));
-        let groups: Map<string, ImageHistoryEntry | undefined>;
-        try { groups = await readServiceMarkerLatest(chunk, signal); }
-        catch (error) {
+      while (!signal.aborted && (embedKeys.size || metaKeys.size)) {
+        const embed = embedKeys.size > 0; // The latest floor's pictures come first.
+        const source = embed ? embedKeys : metaKeys;
+        const chunk = [...source].slice(0, embed ? EMBED_CHUNK : META_CHUNK);
+        chunk.forEach(key => source.delete(key));
+        try {
+          if (embed) {
+            const groups = await readServiceMarkerLatest(chunk, signal);
+            for (const key of chunk) {
+              const entry = groups.get(key);
+              restored.set(key, entry);
+              saved.set(key, entry);
+              waitingControls.get(key)?.forEach(item => item.control.restore(entry));
+              waitingControls.delete(key);
+            }
+          } else {
+            const groups = await readServiceMarkerSaved(chunk, signal);
+            for (const key of chunk) {
+              const meta = groups.get(key);
+              saved.set(key, meta);
+              waitingControls.get(key)?.forEach(item => item.control.restoreSaved(meta !== undefined));
+              waitingControls.delete(key);
+            }
+          }
+        } catch (error) {
           if (signal.aborted) return;
           report(error);
           const text = error instanceof Error ? error.message : '图片读取失败。';
           for (const key of chunk) {
-            waitingControls.get(key)?.forEach(item => item.control.restore(undefined, text));
+            waitingControls.get(key)?.forEach(item => {
+              if (embed) item.control.restore(undefined, text);
+              else item.control.restoreSaved(false, text);
+            });
             waitingControls.delete(key);
           }
-          continue;
-        }
-        for (const key of chunk) {
-          const entry = groups.get(key);
-          restored.set(key, entry);
-          waitingControls.get(key)?.forEach(item => item.control.restore(entry));
-          waitingControls.delete(key);
         }
       }
     } finally { loading = false; }
@@ -238,6 +259,11 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
     else if (event.action === 'cancel') item.control.cancel();
   });
   const offChat = watchChatRendering((messageId, _change, event) => {
+    // A different save's keys never match this chat again; drop its queues without
+    // disturbing the departing controls, which the next render disposes anyway.
+    if (event === 'CHAT_CHANGED') {
+      restored.clear(); saved.clear(); embedKeys.clear(); metaKeys.clear(); waitingControls.clear();
+    }
     if (['CHAT_CHANGED', 'MESSAGE_SWIPED', 'MESSAGE_UPDATED', 'MESSAGE_DELETED'].includes(event ?? '')) {
       for (const group of registered.values()) {
         if (event === 'CHAT_CHANGED' || messageId === undefined || group.floor.floor === messageId) group.signature = '';
@@ -248,10 +274,11 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
   });
   const offHistory = onImageHistoryChanged(change => {
     // Saved or cleaned images make the cached newest pictures stale; deletions only drop the affected keys.
-    if (change.savedId !== undefined || change.before !== undefined) restored.clear();
+    if (change.savedId !== undefined || change.before !== undefined) { restored.clear(); saved.clear(); }
     else if (change.deletedIds?.length) {
       const deleted = new Set(change.deletedIds);
       for (const [key, entry] of restored) if (entry && deleted.has(entry.id)) restored.set(key, undefined);
+      for (const [key, entry] of saved) if (entry && deleted.has(entry.id)) saved.set(key, undefined);
     }
     controls.forEach(item => item.control.removeHistory(change));
   });
@@ -262,7 +289,7 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
       item.control.dispose();
     }
     controls.clear();
-    restored.clear(); waitingKeys.clear(); waitingControls.clear();
+    restored.clear(); saved.clear(); embedKeys.clear(); metaKeys.clear(); waitingControls.clear();
     for (const item of registered.values()) item.signature = '';
     schedule();
   }, { signal });
