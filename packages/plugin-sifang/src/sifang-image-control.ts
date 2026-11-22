@@ -133,21 +133,39 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
     return release;
   }
 
-  async function refreshLatest(batch?: BatchPicture) {
+  /** The batch loader injects the saved picture here; a failure keeps automatic draws from billing twice. */
+  let settled = false;
+  let settleReady!: () => void;
+  const ready = new Promise<void>(resolve => { settleReady = resolve; });
+  function restore(entry: ImageHistoryEntry | undefined, failure?: string): void {
+    if (settled || controller.signal.aborted) return;
+    settled = true;
+    settleReady();
+    historyAvailable = failure === undefined;
+    if (!displayed) displayed = entry;
+    if (!request) report(failure ?? (displayed ? savedText : ''));
+    else show();
+  }
+  async function refreshLatest() {
     try {
-      const entries = batch ? (batch.entry ? [batch.entry] : [])
-        : historyKey ? await fetchHistory(historyKey, controller.signal, true) : [];
+      const entries = historyKey ? await fetchHistory(historyKey, controller.signal, true) : [];
       if (controller.signal.aborted) return;
       historyAvailable = true;
       if (displayed) return;
       displayed = entries.at(-1);
-      if (!request) report(batch?.error ?? (displayed ? savedText : ''));
+      if (!request) report(displayed ? savedText : '');
       else show();
     } catch (error) {
       if (!controller.signal.aborted && !request) report(error instanceof Error ? error.message : '图片读取失败。');
     }
   }
-  const ready = refreshLatest(initial);
+  if (initial) {
+    settled = true;
+    settleReady();
+    historyAvailable = true;
+    if (initial.entry) displayed = initial.entry;
+    report(initial.error ?? (displayed ? savedText : ''));
+  }
 
   async function generate(autoSignal?: AbortSignal): Promise<void> {
     if (controller.signal.aborted || request || autoSignal?.aborted || !hooks.current()) return;
@@ -240,7 +258,9 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
     open() { void openHistory(); },
     removeHistory: remove,
     refresh: show,
+    restore,
     dispose() {
+      if (!settled) { settled = true; settleReady(); }
       controller.abort(); closeGallery();
       displayed = undefined;
     },

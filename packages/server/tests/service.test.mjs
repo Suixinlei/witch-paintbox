@@ -113,7 +113,7 @@ test('standalone service plans once, returns a binary image once and keeps histo
     await start();
     assert.equal((await send('health', undefined, { Authorization: 'invalid' })).status, 401);
     assert.equal((await send('health', undefined, { Origin: 'https://unexpected.invalid' })).status, 403);
-    assert.deepEqual(await (await send('health')).json(), { version: 2, revision: null });
+    assert.deepEqual(await (await send('health')).json(), { version: 3, revision: null });
     const original = '角色走进庭院。\n\n月光照在水面上。';
     assert.equal((await send('plan', { original, excludedTags: [] })).status, 409);
 
@@ -282,6 +282,17 @@ test('standalone service plans once, returns a binary image once and keeps histo
     assert.ok(page.value.entries.some(entry => entry.id === batch.value.pictures[0].entry.id));
     await send('history/delete', { id: 'finished' });
     assert.deepEqual((await unpack(await (await send('history/marker', { markerKey })).blob())).value.entries, []);
+    const batchKey = batch.value.pictures[0].markerKey;
+    const grouped = await unpack(await (await send('history/marker', { markerKeys: [markerKey, batchKey], latest: true })).blob());
+    assert.equal(grouped.value.groups.length, 2);
+    assert.equal(grouped.value.groups[0].markerKey, markerKey);
+    assert.deepEqual(grouped.value.groups[0].entries, []);
+    assert.equal(grouped.value.groups[1].entries[0].markerKey, batchKey);
+    assert.equal(grouped.blobs.length, 1);
+    assert.equal((await send('history/marker', { markerKeys: [markerKey, batchKey], latest: false })).status, 400);
+    assert.equal((await send('history/marker', { markerKeys: [], latest: true })).status, 400);
+    assert.equal((await send('history/marker', { markerKeys: [markerKey, markerKey], latest: true })).status, 400);
+    assert.equal((await send('history/marker', { markerKeys: Array.from({ length: 65 }, () => markerKey + 'x'), latest: true })).status, 400);
     assert.equal(calls.length, 16);
     assert.ok(drawIntervals.every(ms => ms >= DRAW_INTERVAL_MS - 40), 'all image starts follow the cooldown');
     finishedDrawAt = undefined;
@@ -430,6 +441,30 @@ test('DeepSeek JSON output requests an object and preserves insertion validation
   assert.deepEqual(request.messages, messages);
   await requestServiceModel({ ...settings, transport: 'toolcall' }, messages, signal);
   assert.equal(request.response_format, undefined);
+});
+
+test('GLM thinking maps to reasoning_effort and JSON output requests an object', async t => {
+  const requests = [];
+  t.mock.method(globalThis, 'fetch', async (_url, { body }) => {
+    requests.push(JSON.parse(body));
+    return Response.json({ choices: [{ message: { content: '{"images":[]}' } }] });
+  });
+  const base = { ...defaultModelSettings(), mode: 'custom', url: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-5.3-flash', transport: 'nonstream' };
+  const signal = new AbortController().signal;
+  const messages = [{ role: 'user', content: 'Return an empty images object.' }];
+  for (const settings of [base, { ...base, thinkingMode: 'low' }, { ...base, thinkingMode: 'off' }]) {
+    assert.equal(await requestServiceModel(settings, messages, signal), '{"images":[]}');
+  }
+  // GLM-5.3-Flash always thinks and rejects { type: 'disabled' }, so "off" and "low" both use the lightest effort and "default" leaves it unset.
+  assert.deepEqual(requests.map(request => [request.thinking, request.reasoning_effort]), [
+    [undefined, undefined], [undefined, 'low'], [undefined, 'low'],
+  ]);
+  requests.length = 0;
+  await requestServiceModel({ ...base, jsonOutput: true }, messages, signal);
+  assert.deepEqual(requests[0].response_format, { type: 'json_object' });
+  assert.match(requests[0].messages.at(-1).content, /JSON 对象.*images/);
+  await requestServiceModel({ ...base, jsonOutput: true, url: 'https://compatible.example.test' }, messages, signal);
+  assert.equal(requests[1].response_format, undefined);
 });
 
 test('NovelAI retries a failed TLS handshake with the same payload and never repeats an ambiguous reset', async t => {

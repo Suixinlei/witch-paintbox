@@ -6,7 +6,7 @@ import type { ImageInsertionResult } from './image-insertion.js';
 import type { IllustrationItem } from './illustration-selection.js';
 import type { VibeItem } from './vibe-transfer.js';
 
-export const SERVICE_VERSION = 2;
+export const SERVICE_VERSION = 3;
 export const PACKET_TYPE = 'application/vnd.witch-paintbox.v1';
 const METADATA_LIMIT = 16 * 1024 * 1024;
 

@@ -131,10 +131,26 @@ export function createSifangImageControl(entry, root, hooks, initial) {
         setTimeout(release, 4000);
         return release;
     }
-    async function refreshLatest(batch) {
+    /** The batch loader injects the saved picture here; a failure keeps automatic draws from billing twice. */
+    let settled = false;
+    let settleReady;
+    const ready = new Promise(resolve => { settleReady = resolve; });
+    function restore(entry, failure) {
+        if (settled || controller.signal.aborted)
+            return;
+        settled = true;
+        settleReady();
+        historyAvailable = failure === undefined;
+        if (!displayed)
+            displayed = entry;
+        if (!request)
+            report(failure ?? (displayed ? savedText : ''));
+        else
+            show();
+    }
+    async function refreshLatest() {
         try {
-            const entries = batch ? (batch.entry ? [batch.entry] : [])
-                : historyKey ? await fetchHistory(historyKey, controller.signal, true) : [];
+            const entries = historyKey ? await fetchHistory(historyKey, controller.signal, true) : [];
             if (controller.signal.aborted)
                 return;
             historyAvailable = true;
@@ -142,7 +158,7 @@ export function createSifangImageControl(entry, root, hooks, initial) {
                 return;
             displayed = entries.at(-1);
             if (!request)
-                report(batch?.error ?? (displayed ? savedText : ''));
+                report(displayed ? savedText : '');
             else
                 show();
         }
@@ -151,7 +167,14 @@ export function createSifangImageControl(entry, root, hooks, initial) {
                 report(error instanceof Error ? error.message : '图片读取失败。');
         }
     }
-    const ready = refreshLatest(initial);
+    if (initial) {
+        settled = true;
+        settleReady();
+        historyAvailable = true;
+        if (initial.entry)
+            displayed = initial.entry;
+        report(initial.error ?? (displayed ? savedText : ''));
+    }
     async function generate(autoSignal) {
         if (controller.signal.aborted || request || autoSignal?.aborted || !hooks.current())
             return;
@@ -260,7 +283,12 @@ export function createSifangImageControl(entry, root, hooks, initial) {
         open() { void openHistory(); },
         removeHistory: remove,
         refresh: show,
+        restore,
         dispose() {
+            if (!settled) {
+                settled = true;
+                settleReady();
+            }
             controller.abort();
             closeGallery();
             displayed = undefined;

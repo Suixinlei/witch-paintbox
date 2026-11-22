@@ -366,12 +366,13 @@ try {
   const disabledDrawing = saveWorkflow();
   await admin.locator('[name="autoGenerateImages"]').uncheck();
   assert.ok((await disabledDrawing).ok());
+  // The plugin restores saved pictures through one batched history read right after the page mounts.
+  const latestHistory = page.waitForResponse(response => response.url() === service + '/v1/history/marker'
+    && response.request().method() === 'POST' && response.request().postDataJSON().latest === true);
   await page.reload();
   await page.getByRole('button', { name: '打开魔女画匣', exact: true }).click();
   assert.equal(await autoProcess.inputValue(), 'enabled');
   const callsBeforePrompt = calls.length;
-  const latestHistory = page.waitForResponse(response => response.url() === service + '/v1/history/marker'
-    && response.request().method() === 'POST' && response.request().postDataJSON().latest === true);
   await page.evaluate(() => fixture.emit('floor', { floor: fixture.floor.floor, node: fixture.floor.node }));
   await page.waitForFunction(() => fixture.writes === 1 && fixture.markers.length === 1);
   await page.waitForFunction(() => fixture.view?.blob instanceof Blob);
@@ -383,7 +384,8 @@ try {
   });
   assert.ok(packetResponse.ok);
   const latest = await unpack(await packetResponse.blob());
-  assert.equal(latest.value.entries.length, 1);
+  assert.equal(latest.value.groups.length, 1);
+  assert.equal(latest.value.groups[0].entries.length, 1);
   assert.equal(latest.blobs.length, 1);
   assert.deepEqual(calls.slice(callsBeforePrompt), ['/v1/chat/completions']);
   assert.deepEqual(historyReads, [false, true]);

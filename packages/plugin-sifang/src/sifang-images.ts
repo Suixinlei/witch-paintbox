@@ -2,8 +2,9 @@ import { imageChatContext, readAssistantMessages, watchChatRendering } from './c
 import { servicePolicy } from './service-runtime.js';
 import { markerEntries, type MarkerEntry, type AssistantImageMessage } from './image-marker-history.js';
 import { automaticImages } from './automatic-images.js';
-import { onImageHistoryChanged } from './image-history.js';
+import { onImageHistoryChanged, type ImageHistoryEntry } from './image-history.js';
 import { createSifangImageControl, type NativeImageView } from './sifang-image-control.js';
+import { readServiceMarkerLatest } from './service-client.js';
 import { sifangHost, type SifangFloor } from './sifang-host.js';
 import { readSifangFloor, readSifangFloors, isSifangFloorPending } from './sifang-chat.js';
 import { clearSifangBatch, sifangBatchPicture } from './sifang-batch.js';
@@ -97,6 +98,52 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
     return `wp-${Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('')}`;
   }
 
+  /** Restoring a whole chat used to cost one request per marker; chunks plus this cache keep refreshes light. */
+  const restored = new Map<string, ImageHistoryEntry | undefined>();
+  const waitingKeys = new Set<string>();
+  const waitingControls = new Map<string, Set<NativeControl>>();
+  let loading = false;
+  let loadTimer: ReturnType<typeof setTimeout> | undefined;
+  const CHUNK = 12;
+  function wantLatest(item: NativeControl): void {
+    const key = item.entry.historyKey;
+    if (!key) { item.control.restore(undefined); return; }
+    if (restored.has(key)) { item.control.restore(restored.get(key)); return; }
+    const waiters = waitingControls.get(key);
+    if (waiters) { waiters.add(item); return; } // Already queued or in flight.
+    waitingControls.set(key, new Set([item]));
+    waitingKeys.add(key);
+    if (!loading && loadTimer === undefined) loadTimer = setTimeout(() => { loadTimer = undefined; void load(); }, 60);
+  }
+  async function load(): Promise<void> {
+    if (loading || signal.aborted) return;
+    loading = true;
+    try {
+      while (!signal.aborted && waitingKeys.size) {
+        const chunk = [...waitingKeys].slice(0, CHUNK);
+        chunk.forEach(key => waitingKeys.delete(key));
+        let groups: Map<string, ImageHistoryEntry | undefined>;
+        try { groups = await readServiceMarkerLatest(chunk, signal); }
+        catch (error) {
+          if (signal.aborted) return;
+          report(error);
+          const text = error instanceof Error ? error.message : '图片读取失败。';
+          for (const key of chunk) {
+            waitingControls.get(key)?.forEach(item => item.control.restore(undefined, text));
+            waitingControls.delete(key);
+          }
+          continue;
+        }
+        for (const key of chunk) {
+          const entry = groups.get(key);
+          restored.set(key, entry);
+          waitingControls.get(key)?.forEach(item => item.control.restore(entry));
+          waitingControls.delete(key);
+        }
+      }
+    } finally { loading = false; }
+  }
+
   async function render(): Promise<void> {
     if (rendering || signal.aborted) return;
     rendering = true;
@@ -122,6 +169,7 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
             const id = await idFor(entry.key);
             if (signal.aborted || ticket !== version) break;
             const created = { id, entry, message, floor, registered: false, updating: false, revision: 0 } as NativeControl;
+            const batch = sifangBatchPicture(message.text, entry.historyKey);
             created.control = createSifangImageControl(entry, root, {
               current: () => isCurrent(created),
               pending: () => isSifangFloorPending(created.floor.saveId, created.floor.node),
@@ -129,8 +177,10 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
               update(view) { created.view = view; ++created.revision; void update(created); },
               floor: () => created.message.messageId,
               watch: () => watchFrame(created),
-            }, sifangBatchPicture(message.text, entry.historyKey));
+            }, batch);
             controls.set(entry.key, created);
+            // A batch picture already seeded the control; otherwise it joins the shared restore queue.
+            if (!batch) wantLatest(created);
             item = created;
           }
           item.entry = entry; item.message = message; item.floor = floor;
@@ -196,7 +246,15 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
     if (event === 'GENERATION_ENDED' || event === 'GENERATION_STOPPED') automatic.settled();
     schedule();
   });
-  const offHistory = onImageHistoryChanged(change => controls.forEach(item => item.control.removeHistory(change)));
+  const offHistory = onImageHistoryChanged(change => {
+    // Saved or cleaned images make the cached newest pictures stale; deletions only drop the affected keys.
+    if (change.savedId !== undefined || change.before !== undefined) restored.clear();
+    else if (change.deletedIds?.length) {
+      const deleted = new Set(change.deletedIds);
+      for (const [key, entry] of restored) if (entry && deleted.has(entry.id)) restored.set(key, undefined);
+    }
+    controls.forEach(item => item.control.removeHistory(change));
+  });
   window.addEventListener('witch-paintbox:service-changed', () => {
     clearSifangBatch();
     for (const item of controls.values()) {
@@ -204,6 +262,7 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
       item.control.dispose();
     }
     controls.clear();
+    restored.clear(); waitingKeys.clear(); waitingControls.clear();
     for (const item of registered.values()) item.signature = '';
     schedule();
   }, { signal });
@@ -212,6 +271,7 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
   window.addEventListener('storage', schedule, { signal });
   signal.addEventListener('abort', () => {
     ++version; offImage(); offChat(); offHistory(); automatic.dispose();
+    clearTimeout(loadTimer);
     for (const item of controls.values()) { item.registered = false; item.control.dispose(); }
     controls.clear();
     for (const { floor } of registered.values()) {

@@ -141,6 +141,25 @@ async function readHistory<T extends { entries: WireHistoryEntry[] }>(path: stri
 export async function readServiceHistory(markerKey: string, signal?: AbortSignal, latest = false): Promise<ImageHistoryEntry[]> {
   return (await readHistory('history/marker', { markerKey, ...(latest ? { latest: true } : {}) }, signal)).entries;
 }
+/** One latest entry for many markers in a single call, so restoring a chat costs a few requests. */
+export async function readServiceMarkerLatest(markerKeys: readonly string[], signal?: AbortSignal): Promise<Map<string, ImageHistoryEntry | undefined>> {
+  const response = await sendService('history/marker', { markerKeys, latest: true }, signal, undefined, 120_000);
+  const { value, blobs } = await unpack<{ groups: { markerKey: string; entries: WireHistoryEntry[] }[] }>(await response.blob());
+  const invalid = () => new Error('独立服务图片历史格式无效。');
+  if (!Array.isArray(value?.groups) || value.groups.length !== new Set(value.groups.map(group => group?.markerKey)).size) throw invalid();
+  const result = new Map<string, ImageHistoryEntry | undefined>();
+  let cursor = 0;
+  for (const group of value.groups) {
+    if (typeof group?.markerKey !== 'string' || !Array.isArray(group.entries) || group.entries.length > 1) throw invalid();
+    const entry = group.entries[0];
+    if (!entry) { result.set(group.markerKey, undefined); continue; }
+    const blob = blobs[cursor++];
+    if (!blob?.size) throw invalid();
+    result.set(group.markerKey, { ...entry, blob } as ImageHistoryEntry);
+  }
+  if (cursor !== blobs.length) throw invalid();
+  return result;
+}
 export async function readServiceHistoryPage(scope: string | null, before: [number, string] | null, limit: number, signal?: AbortSignal): Promise<ImageHistoryPage> {
   return readHistory<{ entries: WireHistoryEntry[]; more: boolean; next: [number, string] | null }>('history/page', { scope, before, limit }, signal);
 }

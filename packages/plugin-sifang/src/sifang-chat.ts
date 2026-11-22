@@ -236,7 +236,10 @@ export async function captureSifangAssistant(target?: SifangFloorTarget): Promis
     await assertSifangSnapshot(snapshot);
     return snapshot;
   }
-  await refresh('MESSAGE_UPDATED');
+  // Capturing only touches the latest reply. A no-floor refresh would re-read every floor and
+  // re-send every marker image, freezing the page right after each insertion.
+  const cachedLatest = [...readSifangFloors()].reverse().find(floor => floor.role === 'assistant');
+  await refresh('MESSAGE_UPDATED', cachedLatest?.floor);
   const host = requireSifangHost();
   const latest = await host.game.floor();
   if (latest) checkFloor(latest);

@@ -142,6 +142,32 @@ async function readHistory(path, query, signal) {
 export async function readServiceHistory(markerKey, signal, latest = false) {
     return (await readHistory('history/marker', { markerKey, ...(latest ? { latest: true } : {}) }, signal)).entries;
 }
+/** One latest entry for many markers in a single call, so restoring a chat costs a few requests. */
+export async function readServiceMarkerLatest(markerKeys, signal) {
+    const response = await sendService('history/marker', { markerKeys, latest: true }, signal, undefined, 120_000);
+    const { value, blobs } = await unpack(await response.blob());
+    const invalid = () => new Error('独立服务图片历史格式无效。');
+    if (!Array.isArray(value?.groups) || value.groups.length !== new Set(value.groups.map(group => group?.markerKey)).size)
+        throw invalid();
+    const result = new Map();
+    let cursor = 0;
+    for (const group of value.groups) {
+        if (typeof group?.markerKey !== 'string' || !Array.isArray(group.entries) || group.entries.length > 1)
+            throw invalid();
+        const entry = group.entries[0];
+        if (!entry) {
+            result.set(group.markerKey, undefined);
+            continue;
+        }
+        const blob = blobs[cursor++];
+        if (!blob?.size)
+            throw invalid();
+        result.set(group.markerKey, { ...entry, blob });
+    }
+    if (cursor !== blobs.length)
+        throw invalid();
+    return result;
+}
 export async function readServiceHistoryPage(scope, before, limit, signal) {
     return readHistory('history/page', { scope, before, limit }, signal);
 }

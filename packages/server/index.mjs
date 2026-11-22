@@ -190,6 +190,12 @@ async function route(req, res, signal, isRisu) {
   }
   const data = await readJson(req);
   if (path === '/v1/history/marker') {
+    if (data.markerKeys !== undefined) {
+      if (data.latest !== true || !Array.isArray(data.markerKeys) || !data.markerKeys.length || data.markerKeys.length > 64
+        || new Set(data.markerKeys).size !== data.markerKeys.length
+        || data.markerKeys.some(key => !text(key, 1_048_576))) invalid();
+      return sendPacket(res, await library.markers(data.markerKeys));
+    }
     if (!text(data.markerKey, 1_048_576) || !data.markerKey || (data.latest !== undefined && typeof data.latest !== 'boolean')) invalid();
     return sendPacket(res, await library.marker(data.markerKey, data.latest));
   }
