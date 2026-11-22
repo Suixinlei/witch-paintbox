@@ -679,7 +679,7 @@ export class AnchorConfig {
                 throw withFault(new Error('请先填写角色的固定外貌 tag。'), 'setup');
             const settings = loadImageSettings();
             emitPetEvent({ type: 'image', id: pet, source: 'portrait', phase: 'start', provider: settings.provider, summary: draft.name });
-            const positive = [settings.positive, appearance, outfitTags].map(part => part.trim()).filter(Boolean).join(', ');
+            const positive = ['solo', settings.positive, appearance, outfitTags].map(part => part.trim()).filter(Boolean).join(', ');
             const combinedNegative = [settings.negative, negative].map(part => part.trim()).filter(Boolean).join(', ');
             const result = await generatePreparedImage(settings, { positive, negative: combinedNegative, characters: [] }, request.signal, progress => {
                 if (request.signal.aborted || !current())

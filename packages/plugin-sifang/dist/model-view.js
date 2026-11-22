@@ -1,7 +1,7 @@
 import { isServiceEditor } from './service-client.js';
 import { isSifangEnvironment } from './sifang-host.js';
 import { imageProviderName } from './image-settings.js';
-import { supportsDeepSeekThinking } from './model-types.js';
+import { thinkingProvider } from './model-types.js';
 import { listFeatureLayers } from './feature-layers.js';
 import { getHostStore } from './host-storage.js';
 import { imageSizeEntryMode } from './image-size-mode.js';
@@ -161,6 +161,20 @@ export function modelSettingsView(settings, state) {
     <section class="config-section" data-editor-page="model" aria-labelledby="model-connection-heading">
       <header class="section-heading"><span class="section-index" aria-hidden="true">01</span>
         <h2 class="section-title" id="model-connection-heading">模型连接</h2><p class="section-description">理解正文，生成场景提示词并插入正文，交给生图 API 绘图。连接与回复参数由各生图通道共用。</p></header>
+      <div class="model-profile-box">
+        <div class="model-profile-line">
+          <label class="config-field"><span>已存模型配置</span>
+            <select data-model-field="profile"><option value="">新配置</option>${options((state.apiProfiles ?? []).map(item => ({ value: item.id, label: item.name })), state.activeApiId ?? '')}</select>
+          </label>
+          <label class="config-field"><span>配置名称</span>
+            <input type="text" data-model-field="profileName" value="${escape(state.apiProfileName ?? '')}" maxlength="256" placeholder="给这套连接起名" autocomplete="off">
+          </label>
+        </div>
+        <div class="model-profile-actions">
+          <button type="button" class="text-button" data-model-action="delete-profile"${state.activeApiId ? '' : ' disabled'}>删除配置</button>
+        </div>
+        <p class="config-status${state.apiProfileError ? ' is-error' : ''}" data-model-profile-status role="status">${escape(state.apiProfileStatus ?? '可保存多套模型连接，随时切换。选择已存配置会载入它的连接与回复参数；填写名称后点击“保存配置”，即把当前连接存为一套预设。删除同样需再次保存生效。')}</p>
+      </div>
       <label class="config-field channel-field"><span>连接方式</span>
         <select data-model-field="mode">${options([
         { value: 'tavern', label: (isSifangEnvironment() || isServiceEditor()) ? '独立服务默认模型' : '跟随酒馆主 API' },
@@ -186,14 +200,14 @@ export function modelSettingsView(settings, state) {
         </div>
         <div data-model-picker-host${settings.models.length ? '' : ' hidden'}>${modelPickerView(settings)}</div>
       </div>
-      ${isServiceEditor() ? `<label class="config-field channel-field" data-deepseek-thinking${settings.mode === 'custom' && supportsDeepSeekThinking(settings.url) ? '' : ' hidden'}>
-        <span>DeepSeek 思考模式</span>
+      ${isServiceEditor() ? `<label class="config-field channel-field" data-thinking-control${settings.mode === 'custom' && thinkingProvider(settings.url) !== null ? '' : ' hidden'}>
+        <span>思考模式</span>
         <select data-model-field="thinkingMode">${options([
         { value: 'default', label: '跟随模型' }, { value: 'off', label: '关闭思考' }, { value: 'low', label: '低强度思考' },
     ], settings.thinkingMode ?? 'default')}</select>
       </label>
-      <label class="config-field channel-field" data-deepseek-json${settings.mode === 'custom' && supportsDeepSeekThinking(settings.url) && settings.transport !== 'toolcall' ? '' : ' hidden'}>
-        <span>DeepSeek 配图响应格式</span>
+      <label class="config-field channel-field" data-json-control${settings.mode === 'custom' && thinkingProvider(settings.url) !== null && settings.transport !== 'toolcall' ? '' : ' hidden'}>
+        <span>配图响应格式</span>
         <select data-model-field="jsonOutput">${options([
         { value: 'text', label: '默认文本' }, { value: 'json_object', label: 'JSON 对象（json_object）' },
     ], settings.jsonOutput ? 'json_object' : 'text')}</select>

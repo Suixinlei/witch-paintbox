@@ -9,6 +9,12 @@ import { pathToFileURL } from 'node:url';
 
 const [mode, release] = process.argv.slice(2);
 
+async function serviceVersion() {
+  const { SERVICE_VERSION } = await import(
+    pathToFileURL(join(release, 'packages/plugin-sifang/dist/service-protocol.js')).href);
+  return SERVICE_VERSION;
+}
+
 function client(base, token) {
   return async function request(path, body, status = 200) {
     const headers = { Authorization: 'Bearer ' + token };
@@ -57,7 +63,7 @@ async function smoke() {
     });
     const request = client(base, token);
     await checkAssets(request);
-    assert.equal((await (await request('/v1/health')).json()).version, 2);
+    assert.equal((await (await request('/v1/health')).json()).version, await serviceVersion());
     const history = await request('/v1/history/marker', { markerKey: 'smoke', latest: true });
     assert.ok((await history.arrayBuffer()).byteLength);
     await request('/v1/history/marker', { markerKey: 'smoke', latest: 'invalid' }, 400);
@@ -82,7 +88,7 @@ async function verify() {
   const policy = await (await request('/v1/client/preferences')).json();
   const risuPrefs = await (await risu('/v1/risu/preferences')).text();
   assert.ok(status.configured && health.revision && policy.preferences);
-  assert.equal(health.version, 2);
+  assert.equal(health.version, await serviceVersion());
   assert.equal(resolve(summary.directory), resolve(process.env.PAINTBOX_DATA_DIR));
   const idle = [status.prompt, status.draw].every(queue => queue.active === 0 && queue.queued === 0);
   let latestImageVerified = false;

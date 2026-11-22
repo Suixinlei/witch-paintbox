@@ -1,9 +1,9 @@
 import { fetchModelList } from './model-api.js';
-import { supportsDeepSeekThinking } from './model-types.js';
+import { thinkingProvider } from './model-types.js';
 import { isServiceEditor } from './service-client.js';
 import { flushServiceConfig } from './service-config.js';
 import { featureLayerMessages, listFeatureLayers, onFeatureLayersChanged } from './feature-layers.js';
-import { createPromptOrder, detachStoredWorldbook, hasSavedModelSettings, isImageSizeModeSaving, loadModelSettings, saveImageSizeMode, saveModelSettings, modelPresetSettings, modelSharedSettings, type ModelPresetSettings, type ModelSettings, type PromptEntry } from './model-settings.js';
+import { createPromptOrder, detachStoredWorldbook, hasSavedModelSettings, isImageSizeModeSaving, loadAllModelSettings, loadModelSettings, modelEndpointOf, saveImageSizeMode, saveModelSettings, modelPresetSettings, modelSharedSettings, type ModelApiProfile, type ModelEndpoint, type ModelPresetSettings, type ModelSettings, type PromptEntry } from './model-settings.js';
 import { modelChoicesView, modelPickerView, modelSettingsView, presetIndexView, presetWorkspaceView, worldbookSettingsView, PRESET_PAGE_SIZE, type ModelViewState } from './model-view.js';
 import { importModelPreset, MAX_PRESET_BYTES, MAX_PRESET_ENTRIES } from './preset-import.js';
 import { deleteWorldbook, importWorldbook, listWorldbooks, onWorldbooksChanged, readWorldbook, updateWorldbookEntryContent } from './worldbook-source.js';
@@ -17,6 +17,17 @@ import { applyImageSizeMode, imageSizeEntryMode, imageSizeSelection, normalizeSi
 
 function escape(value: string): string {
   return value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
+}
+
+function newProfileId(taken: { id: string }[]): string {
+  const ids = new Set(taken.map(item => item.id));
+  let id: string;
+  do id = `${Date.now().toString(36)}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`; while (ids.has(id));
+  return id;
+}
+
+function endpointLabel(endpoint: ModelEndpoint): string {
+  return endpoint.model.trim() || endpoint.url.trim() || '未命名配置';
 }
 
 interface WorldbookContentDraft {
@@ -51,6 +62,13 @@ export class ModelConfig {
   private worldbookError = false;
   private worldbookDrafts = new Map<string, WorldbookContentDraft>();
   private restoringWorldbookFocus = false;
+  private apiProfiles: ModelApiProfile[] = [];
+  private activeApiId = '';
+  private apiProfileName = '';
+  private savedActiveApiId = '';
+  private savedProfileName = '';
+  private profileNotice = '';
+  private profileError = false;
 
   private get showsModel(): boolean { return this.page === 'model' || this.page === 'service'; }
   private get showsWorldbooks(): boolean { return this.page === 'worldbook' || this.page === 'service'; }
@@ -109,7 +127,7 @@ export class ModelConfig {
     this.refresh = this.bookRequest = this.previewRequest = null;
     this.importRequest++; this.draftRevision++;
     this.loadError = '';
-    if (scope === 'all') { this.settings = null; this.saved = ''; }
+    if (scope === 'all') { this.settings = null; this.saved = ''; this.apiProfiles = []; this.activeApiId = ''; this.apiProfileName = ''; this.savedActiveApiId = ''; this.savedProfileName = ''; }
     this.importNotice = ''; this.importError = false;
     this.selectedKey = ''; this.presetPage = 0; this.preview = undefined;
     if (scope !== 'presets') {
@@ -127,6 +145,7 @@ export class ModelConfig {
       } else {
         this.settings = stored;
         this.saved = hasSavedModelSettings() ? JSON.stringify(stored) : '';
+        this.loadProfileState();
       }
       this.ensureLayerSlots();
     } catch (error) { this.loadError = (error as Error).message; }
@@ -211,7 +230,27 @@ export class ModelConfig {
   }
 
   destroy(): void { this.unmount(); this.unsubscribe.forEach(stop => stop()); }
-  private isSaved(): boolean { return this.saved === JSON.stringify(this.settings); }
+  private isSaved(): boolean {
+    return this.saved === JSON.stringify(this.settings)
+      && this.savedActiveApiId === this.activeApiId
+      && this.savedProfileName === this.apiProfileName;
+  }
+
+  /** Read the saved model-connection library; profiles are shared across image providers. */
+  private loadProfileState(): void {
+    try {
+      const all = loadAllModelSettings();
+      this.apiProfiles = all.apiProfiles;
+      this.activeApiId = all.activeApiId;
+      this.savedActiveApiId = all.activeApiId;
+      this.apiProfileName = all.apiProfiles.find(item => item.id === all.activeApiId)?.name ?? '';
+      this.savedProfileName = this.apiProfileName;
+    } catch {
+      this.apiProfiles = []; this.activeApiId = ''; this.savedActiveApiId = '';
+      this.apiProfileName = ''; this.savedProfileName = '';
+    }
+    this.profileNotice = ''; this.profileError = false;
+  }
 
   private applySavedSizeMode(provider: ImageProvider, mode: ImageSizeSelection): void {
     this.sizeModeErrors.delete(provider);
@@ -361,7 +400,9 @@ export class ModelConfig {
     this.presetPage = Math.max(0, Math.min(this.presetPage, lastPage));
     return { saved: this.isSaved(), saving: this.savingSettings, refreshing: this.refresh !== null, selectedKey: this.selectedKey, presetPage: this.presetPage,
       layerPreview: this.preview, worldbook: this.worldbookState(), filterStatus: getContextFilterStatus(),
-      importNotice: this.importNotice || undefined, importError: this.importError, inlineWorldbooks: this.page === 'service' };
+      importNotice: this.importNotice || undefined, importError: this.importError, inlineWorldbooks: this.page === 'service',
+      apiProfiles: this.apiProfiles.map(item => ({ id: item.id, name: item.name })), activeApiId: this.activeApiId,
+      apiProfileName: this.apiProfileName, apiProfileStatus: this.profileNotice || undefined, apiProfileError: this.profileError };
   }
 
   private render(): void {
@@ -506,11 +547,47 @@ export class ModelConfig {
     node.textContent = status.error || (status.active ? '已接入酒馆主 API 上下文隐藏。' : '酒馆主 API 上下文隐藏已关闭。');
   }
 
+  /** Load a saved connection into the draft; the user still clicks 保存配置 to make it the active api. */
+  private chooseProfile(id: string): void {
+    if (!this.settings) return;
+    this.activeApiId = id;
+    const profile = this.apiProfiles.find(item => item.id === id);
+    if (profile) {
+      const { id: _id, name: _name, ...endpoint } = profile;
+      this.settings = { ...this.settings, ...structuredClone(endpoint) };
+      this.apiProfileName = profile.name;
+      this.profileNotice = `已载入配置“${profile.name}”，点击“保存配置”后服务改用它。`;
+    } else {
+      this.apiProfileName = '';
+      this.profileNotice = '将当前连接保存为新配置：填写名称后点击“保存配置”。';
+    }
+    this.profileError = false;
+    this.draftRevision++;
+    this.render();
+  }
+
+  /** Fold the draft connection into the saved library: update the active profile, or create one when a name is given. */
+  private commitProfileState(snapshot: ModelSettings): { apiProfiles: ModelApiProfile[]; activeApiId: string } {
+    const name = this.apiProfileName.trim();
+    if (!name && !this.activeApiId) return { apiProfiles: this.apiProfiles, activeApiId: '' };
+    const endpoint = modelEndpointOf(modelSharedSettings(snapshot));
+    const id = this.activeApiId || newProfileId(this.apiProfiles);
+    const existing = this.apiProfiles.find(item => item.id === id);
+    const finalName = name || existing?.name || endpointLabel(endpoint);
+    if (this.apiProfiles.some(item => item.id !== id && item.name === finalName)) {
+      throw new Error(`已有名为“${finalName}”的模型配置，请换一个名称。`);
+    }
+    const profile: ModelApiProfile = { id, name: finalName, ...endpoint };
+    const apiProfiles = existing ? this.apiProfiles.map(item => item.id === id ? profile : item) : [...this.apiProfiles, profile];
+    return { apiProfiles, activeApiId: id };
+  }
+
   private edit(event: Event): void {
     const input = event.target;
     if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement || input instanceof HTMLSelectElement) || !this.settings) return;
     const settings = this.settings;
     if (input.hasAttribute('data-model-search')) { this.renderModelChoices(); return; }
+    if (input instanceof HTMLSelectElement && input.dataset.modelField === 'profile') { this.chooseProfile(input.value); return; }
     if (input instanceof HTMLTextAreaElement && input.hasAttribute('data-worldbook-content')) {
       this.editWorldbookContent(input); return;
     }
@@ -531,6 +608,7 @@ export class ModelConfig {
           this.container!.querySelector<HTMLElement>('[data-model-custom]')!.hidden = settings.mode !== 'custom';
           this.container!.querySelector<HTMLElement>('[data-model-tavern]')!.hidden = settings.mode !== 'tavern'; break;
         case 'url': case 'key': case 'model': case 'presetName': settings[field] = input.value; break;
+        case 'profileName': this.apiProfileName = input.value; break;
         case 'parseImageMarkers': case 'hideImageContext': settings[field] = (input as HTMLInputElement).checked; break;
         case 'maxTokens': case 'temperature': settings[field] = input.value === '' ? NaN : Number(input.value); break;
         case 'thinkingMode':
@@ -542,11 +620,11 @@ export class ModelConfig {
           if (['nonstream', 'stream', 'compatible', 'toolcall'].includes(input.value)) settings.transport = input.value as ModelSettings['transport']; break;
       }
       if (field === 'url' || field === 'mode' || field === 'transport') {
-        const deepSeek = settings.mode === 'custom' && supportsDeepSeekThinking(settings.url);
-        const thinking = this.container?.querySelector<HTMLElement>('[data-deepseek-thinking]');
-        const json = this.container?.querySelector<HTMLElement>('[data-deepseek-json]');
-        if (thinking) thinking.hidden = !deepSeek;
-        if (json) json.hidden = !deepSeek || settings.transport === 'toolcall';
+        const provider = settings.mode === 'custom' ? thinkingProvider(settings.url) : null;
+        const thinking = this.container?.querySelector<HTMLElement>('[data-thinking-control]');
+        const json = this.container?.querySelector<HTMLElement>('[data-json-control]');
+        if (thinking) thinking.hidden = provider === null;
+        if (json) json.hidden = provider === null || settings.transport === 'toolcall';
       }
       if (field === 'url' || field === 'key' || field === 'mode') {
         this.refresh?.abort(); this.refresh = null; this.syncRefresh();
@@ -629,13 +707,34 @@ export class ModelConfig {
         const snapshot = normalizeSizeProtocolEntries(structuredClone(this.settings));
         this.saving = true; this.syncSave();
         try {
-          await saveModelSettings(snapshot);
+          const profileState = this.commitProfileState(snapshot);
+          await saveModelSettings(snapshot, profileState);
           if (isServiceEditor()) await flushServiceConfig();
           this.sizeModeErrors.delete(snapshot.presetProvider);
           if (this.settings?.presetProvider === snapshot.presetProvider) this.saved = JSON.stringify(snapshot);
           else if (this.saved) this.saved = JSON.stringify({ ...JSON.parse(this.saved), ...modelSharedSettings(snapshot) });
+          this.apiProfiles = profileState.apiProfiles;
+          this.activeApiId = profileState.activeApiId;
+          this.savedActiveApiId = profileState.activeApiId;
+          const activeName = profileState.apiProfiles.find(item => item.id === profileState.activeApiId)?.name ?? '';
+          this.apiProfileName = activeName;
+          this.savedProfileName = activeName;
+          this.profileNotice = activeName ? `已保存模型配置“${activeName}”。` : '模型连接已保存。';
+          this.profileError = false;
           this.maskKey();
         } finally { this.saving = false; this.syncSave(); }
+      } else if (action === 'delete-profile') {
+        const id = this.activeApiId;
+        const profile = this.apiProfiles.find(item => item.id === id);
+        if (!profile) return;
+        if (!window.confirm(`删除模型配置“${profile.name}”？当前连接不受影响，点击“保存配置”后生效。`)) return;
+        this.apiProfiles = this.apiProfiles.filter(item => item.id !== id);
+        this.activeApiId = '';
+        this.apiProfileName = '';
+        this.profileNotice = `已删除配置“${profile.name}”，点击“保存配置”后生效。`;
+        this.profileError = false;
+        this.draftRevision++;
+        this.render();
       } else if (action === 'preset-page-previous' || action === 'preset-page-next') {
         this.presetPage += action === 'preset-page-next' ? 1 : -1;
         this.renderPresetIndex();

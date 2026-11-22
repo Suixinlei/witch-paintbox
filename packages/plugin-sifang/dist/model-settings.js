@@ -69,14 +69,6 @@ export function validateModelSettings(value) {
     const source = record(value);
     if (source.presetProvider !== undefined && !IMAGE_PROVIDERS.includes(source.presetProvider))
         invalid();
-    if (source.mode !== 'tavern' && source.mode !== 'custom')
-        invalid();
-    if (source.transport !== 'nonstream' && source.transport !== 'stream' && source.transport !== 'compatible' && source.transport !== 'toolcall')
-        invalid();
-    if (source.thinkingMode !== undefined && !MODEL_THINKING_MODES.includes(source.thinkingMode))
-        invalid();
-    if (source.jsonOutput !== undefined && typeof source.jsonOutput !== 'boolean')
-        invalid();
     if (source.parseImageMarkers !== undefined && typeof source.parseImageMarkers !== 'boolean')
         invalid();
     if (source.hideImageContext !== undefined && typeof source.hideImageContext !== 'boolean')
@@ -115,18 +107,67 @@ export function validateModelSettings(value) {
         invalid();
     return normalizeSizeProtocolEntries({
         presetProvider: source.presetProvider ?? 'novelai',
-        mode: source.mode, url: text(source.url, 8192), key: text(source.key, 16_384),
-        model: text(source.model, 512), models: stringList(source.models, 10_000),
-        maxTokens: number(source.maxTokens, 1, 65_536, true), temperature: number(source.temperature, 0, 2),
-        transport: source.transport,
-        thinkingMode: source.thinkingMode ?? 'default',
-        jsonOutput: source.jsonOutput === true,
+        ...parseApiFields(source),
         head, tail,
         enabledLayers, promptOrder, worldbookSource: 'uploads', worldbooks,
         presetName: source.presetName === undefined ? '' : text(source.presetName, 256),
         parseImageMarkers: source.parseImageMarkers === undefined ? true : source.parseImageMarkers,
         hideImageContext: source.hideImageContext === undefined ? true : source.hideImageContext,
     });
+}
+/** Validate the connection + reply-parameter fields shared by a full model config and a saved profile. */
+function parseApiFields(source) {
+    if (source.mode !== 'tavern' && source.mode !== 'custom')
+        invalid();
+    if (source.transport !== 'nonstream' && source.transport !== 'stream' && source.transport !== 'compatible' && source.transport !== 'toolcall')
+        invalid();
+    if (source.thinkingMode !== undefined && !MODEL_THINKING_MODES.includes(source.thinkingMode))
+        invalid();
+    if (source.jsonOutput !== undefined && typeof source.jsonOutput !== 'boolean')
+        invalid();
+    return {
+        mode: source.mode, url: text(source.url, 8192), key: text(source.key, 16_384),
+        model: text(source.model, 512), models: stringList(source.models, 10_000),
+        maxTokens: number(source.maxTokens, 1, 65_536, true), temperature: number(source.temperature, 0, 2),
+        transport: source.transport,
+        thinkingMode: source.thinkingMode ?? 'default',
+        jsonOutput: source.jsonOutput === true,
+    };
+}
+function validateModelApiProfile(value) {
+    const source = record(value);
+    const id = text(source.id, 128);
+    if (!id.trim())
+        invalid();
+    const name = text(source.name, 256);
+    return { id, name, ...parseApiFields(source) };
+}
+function apiProfileList(value) {
+    if (value === undefined)
+        return [];
+    if (!Array.isArray(value) || value.length > 200)
+        invalid();
+    const items = value.map(validateModelApiProfile);
+    if (new Set(items.map(item => item.id)).size !== items.length)
+        invalid();
+    return items;
+}
+function selectedApiId(value, items) {
+    if (value === undefined)
+        return '';
+    const id = text(value, 128);
+    if (id && !items.some(item => item.id === id))
+        invalid();
+    return id;
+}
+function sameModelEndpoint(a, b) {
+    return a.mode === b.mode && a.url === b.url && a.model === b.model;
+}
+/** Project a full shared config down to the reusable connection profile fields. */
+export function modelEndpointOf(shared) {
+    const { mode, url, key, model, models, maxTokens, temperature, transport } = shared;
+    return structuredClone({ mode, url, key, model, models, maxTokens, temperature, transport,
+        thinkingMode: shared.thinkingMode ?? 'default', jsonOutput: shared.jsonOutput ?? false });
 }
 export function modelPresetSettings(settings) {
     const { head, tail, enabledLayers, presetName, promptOrder, worldbookSource, worldbooks } = settings;
@@ -142,6 +183,8 @@ function defaultAllModelSettings() {
     return {
         version: 2,
         api: modelSharedSettings(defaultModelSettings()),
+        apiProfiles: [],
+        activeApiId: '',
         presets: Object.fromEntries(IMAGE_PROVIDERS.map(provider => [provider, modelPresetSettings(defaultModelSettings(provider))])),
     };
 }
@@ -164,14 +207,19 @@ export function validateAllModelSettings(value) {
         parsed[provider] = modelPresetSettings(value);
         shared ??= modelSharedSettings(value);
     }
-    return { version: 2, api: shared, presets: parsed };
+    const apiProfiles = apiProfileList(source.apiProfiles);
+    return { version: 2, api: shared, apiProfiles, activeApiId: selectedApiId(source.activeApiId, apiProfiles), presets: parsed };
 }
 const settingsStorage = createSettingsStorage({
     localKey: storageKey, hostKey: 'model-settings-v1', label: '模型配置',
     defaults: defaultAllModelSettings, validate: validateAllModelSettings,
-    stripKeys(value) { value.api.key = ''; return value; },
+    stripKeys(value) { value.api.key = ''; value.apiProfiles.forEach(profile => { profile.key = ''; }); return value; },
     restoreKeys(value, local) {
         value.api.key = value.api.mode === local.api.mode && value.api.url === local.api.url ? local.api.key : '';
+        for (const profile of value.apiProfiles) {
+            const saved = local.apiProfiles.find(item => item.id === profile.id && sameModelEndpoint(item, profile));
+            profile.key = saved?.key ?? '';
+        }
         return value;
     },
     changed() { window.dispatchEvent(new Event('witch-paintbox:model-settings-changed')); },
@@ -196,12 +244,14 @@ export async function detachStoredWorldbook(name) {
         return settings;
     });
 }
-export function saveModelSettings(settings) {
+export function saveModelSettings(settings, profiles) {
     const value = validateModelSettings(settings);
     return settingsStorage.update(current => ({
+        ...current,
         version: 2,
         api: modelSharedSettings(value),
         presets: { ...current.presets, [value.presetProvider]: modelPresetSettings(value) },
+        ...(profiles ? { apiProfiles: profiles.apiProfiles, activeApiId: profiles.activeApiId } : {}),
     }));
 }
 let pendingImageSizeModeSaves = 0;

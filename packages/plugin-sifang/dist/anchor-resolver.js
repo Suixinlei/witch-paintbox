@@ -152,12 +152,11 @@ export function resolveAnchorPromptFields(prompt, anchors, sharedOutfits = []) {
         let outfit;
         if (outfitName !== null) {
             if (outfitName !== '无服装') {
-                outfit = anchor.outfits.find(item => item.name === outfitName);
-                if (!outfit && prefixed && outfitName === 'default')
-                    outfit = anchor.outfits.find(item => item.id === anchor.selectedOutfitId);
-                else if (!outfit && !(prefixed && outfitName === 'base')) {
-                    throw withFault(new Error(`角色“${anchor.name}”没有名为“${outfitName || '（空）'}”的服装，请检查标签。`), 'reference');
-                }
+                // Model-written prompts sometimes guess a sibling character's outfit.
+                // Fall back to the selected default instead of failing the whole draw.
+                outfit = anchor.outfits.find(item => item.name === outfitName)
+                    ?? (prefixed && outfitName === 'base' ? undefined
+                        : anchor.outfits.find(item => item.id === anchor.selectedOutfitId));
             }
         }
         else if (!prefixed || !omitDefault) {

@@ -190,14 +190,22 @@ function mergeApi(config, data, mode) {
         }
         parts.push(`${imageProviderName(provider)}：${take ? '当前连接改用文件' : '保留本地连接'}${incoming.connectionProfiles.length ? `，保存的连接${tallyText(tally, mode)}` : ''}`);
     }
+    // Saved model connections merge by name, exactly like the image connection profiles.
+    const profileTally = { added: 0, replaced: 0, skipped: 0 };
+    const { items: profileItems, ids: profileIds } = mergeNamed(config.model.apiProfiles, data.model.apiProfiles, mode, profileTally, (local, next) => next.key ? { ...next, id: local.id } : null);
+    if (profileItems.length > PROFILE_LIMIT)
+        throw new Error(`保存的模型连接合并后超过 ${PROFILE_LIMIT} 个，请先清理本地模型连接。`);
+    config.model.apiProfiles = profileItems;
     // The marker switches belong to the preset section.
     const endpoint = ({ mode, url, key, model, models, maxTokens, temperature, transport, thinkingMode, jsonOutput }) => ({ mode, url, key, model, models, maxTokens, temperature, transport, thinkingMode, jsonOutput });
     const api = config.model.api, next = data.model.api;
     const take = same(endpoint(api), endpoint(modelSharedSettings(defaultModelSettings())))
         || (mode === 'overwrite' && (next.mode === 'tavern' || Boolean(next.key)));
-    if (take)
+    if (take) {
         Object.assign(api, structuredClone(endpoint(next)));
-    parts.push(`共用模型 API：${take ? '改用文件' : '保留本地'}`);
+        config.model.activeApiId = profileIds.get(data.model.activeApiId) ?? '';
+    }
+    parts.push(`共用模型 API：${take ? '改用文件' : '保留本地'}${data.model.apiProfiles.length ? `，保存的模型连接${tallyText(profileTally, mode)}` : ''}`);
     return parts.join('；');
 }
 function mergeParameters(config, image, mode) {

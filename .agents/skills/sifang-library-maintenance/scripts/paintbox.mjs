@@ -144,7 +144,7 @@ async function cmdDraw(opts) {
         outfitTags = outfit.tags;
       } else if (opts.tags) outfitTags = opts.tags;
       else if (anchor.selectedOutfitId) outfitTags = anchor.outfits.find(o => o.id === anchor.selectedOutfitId)?.tags ?? '';
-      positive = joinTags([nai.positive, anchor.appearance, outfitTags, opts.extra]);
+      positive = joinTags(['solo', nai.positive, anchor.appearance, outfitTags, opts.extra]);
       negative = joinTags([nai.negative, anchor.negative]);
       label = anchor.name;
     } else if (opts.positive) {
