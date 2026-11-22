@@ -214,7 +214,7 @@ try {
       raw: `历史楼层 ${index}`, text: `历史楼层 ${index}`,
     }));
     const line = [...history, floor].map(({ floor, node, role }) => ({ floor, node, role }));
-    window.fixture = { floor, history, context, writes: 0, floorReadsAfterWrite: [], markers: [], view: null, views: {}, notices: [],
+    window.fixture = { floor, history, context, writes: 0, floorReadsAfterWrite: [], markers: [], markerCalls: [], view: null, views: {}, notices: [],
       emit(name, value) { for (const callback of listeners.get(name) ?? []) callback(value); } };
     window.Sifang = {
       apiVersion: 1, capabilities: ['native-game', 'native-events', 'native-text-write', 'native-image-markers'],
@@ -236,7 +236,7 @@ try {
       },
       ui: {
         async toast(text) { fixture.notices.push(text); },
-        async imageMarkers({ markers }) { fixture.markers = markers; },
+        async imageMarkers({ node, markers }) { fixture.markerCalls.push(node); fixture.markers = markers; },
         async imageMarker(view) {
           fixture.view = fixture.views[view.node] = { ...fixture.views[view.node], ...view };
         },
@@ -427,6 +427,34 @@ try {
   assert.deepEqual(await page.evaluate(() => [fixture.writes, fixture.floor.raw]), [3, latestRaw]);
   assert.match(await page.evaluate(() => fixture.history[5].raw), /^历史楼层 5\s*<img>/);
   await page.waitForFunction(() => fixture.views['history-5']?.blob instanceof Blob);
+  assert.deepEqual(errors, []);
+
+  // A floor the host refuses (gone, switched, or still generating) must not block the
+  // other floors' markers, must not be retried on every event, and toasts only once.
+  await page.evaluate(() => {
+    const broken = fixture.history[1997];
+    broken.raw = broken.text = '历史楼层 1997\n<img>\n[废楼]\ngarden\n</img>';
+    const busy = fixture.history[1995];
+    busy.raw = busy.text = '历史楼层 1995\n<img>\n[忙楼]\ngarden\n</img>';
+    busy.busy = true;
+    fixture.rejectCalls = 0;
+    const original = window.Sifang.ui.imageMarkers.bind(window.Sifang.ui);
+    window.Sifang.ui.imageMarkers = async options => {
+      if (options.node === 'history-1997') { fixture.rejectCalls++; throw new Error('这个回复不存在，已切换或还在生成。'); }
+      return original(options);
+    };
+    fixture.emit('floor', { floor: 1997, node: 'history-1997' });
+  });
+  await page.waitForFunction(() => fixture.rejectCalls === 1);
+  const registeredBefore = await page.evaluate(() => fixture.markerCalls.filter(node => node === 'fixture-node').length);
+  await page.evaluate(() => {
+    fixture.emit('floor', { floor: 1995, node: 'history-1995' });
+    fixture.emit('floor', { floor: fixture.floor.floor, node: fixture.floor.node });
+  });
+  await page.waitForFunction(before => fixture.markerCalls.filter(node => node === 'fixture-node').length > before, registeredBefore);
+  assert.equal(await page.evaluate(() => fixture.rejectCalls), 1);
+  assert.equal(await page.evaluate(() => fixture.markerCalls.includes('history-1995')), false);
+  assert.equal(await page.evaluate(() => fixture.notices.filter(text => text.includes('这个回复不存在')).length), 1);
   assert.deepEqual(errors, []);
 
   await admin.locator('#logout').click();

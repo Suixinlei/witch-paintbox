@@ -16,6 +16,9 @@ export function bindSifangImages(root, signal) {
         return;
     const controls = new Map();
     const registered = new Map();
+    // Registrations the host refused (floor gone, save switched, or still generating).
+    // They are retried only when that floor itself changes, never on every render.
+    const rejected = new Map();
     let version = 0;
     let rendering = false;
     let dirty = false;
@@ -48,7 +51,7 @@ export function bindSifangImages(root, signal) {
         async generate({ entry }, signal) { await controls.get(entry.key)?.control.generateAutomatically(signal); },
     }, () => 1);
     async function update(item) {
-        if (isSifangFloorPending(item.floor.saveId, item.floor.node) || item.updating || !item.registered || !item.view || signal.aborted)
+        if (isSifangFloorPending(item.floor.saveId, item.floor.node) || item.floor.busy || item.updating || !item.registered || !item.view || signal.aborted)
             return;
         item.updating = true;
         try {
@@ -248,17 +251,33 @@ export function bindSifangImages(root, signal) {
                     if (groups.has(key))
                         continue;
                     const current = floors.get(previous.floor.floor);
-                    const floor = current?.saveId === previous.floor.saveId && current.node === previous.floor.node ? current : previous.floor;
-                    // An old save may already be closed; the host also releases its transient registrations on switching.
-                    await host.ui.imageMarkers({ saveId: floor.saveId, node: floor.node, expectedRaw: floor.raw, markers: [] }).catch(() => { });
+                    // Only a floor that still exists in the active save needs an explicit release;
+                    // the host drops transient registrations when the save or the floor goes away,
+                    // and calls for vanished targets are what it answers with a rejection.
+                    if (current?.saveId === previous.floor.saveId && current.volume === previous.floor.volume
+                        && current.node === previous.floor.node) {
+                        await host.ui.imageMarkers({ saveId: current.saveId, node: current.node, expectedRaw: current.raw, markers: [] }).catch(() => { });
+                    }
                     registered.delete(key);
                 }
                 for (const [key, { floor, items }] of groups) {
                     const markers = items.map(item => ({ id: item.id, start: item.entry.marker.start, end: item.entry.marker.end, summary: item.entry.marker.summary }));
                     const signature = JSON.stringify([floor.raw, markers]);
                     if (registered.get(key)?.signature !== signature) {
+                        // A busy or refused floor must not block every other floor's pictures; retry
+                        // only after this floor changes (its text, or an event naming it).
+                        if (floor.busy || rejected.get(key)?.signature === signature)
+                            continue;
                         items.forEach(item => { item.registered = false; });
-                        await host.ui.imageMarkers({ saveId: floor.saveId, node: floor.node, expectedRaw: floor.raw, markers });
+                        try {
+                            await host.ui.imageMarkers({ saveId: floor.saveId, node: floor.node, expectedRaw: floor.raw, markers });
+                        }
+                        catch (error) {
+                            rejected.set(key, { signature, floor: floor.floor });
+                            report(error);
+                            continue;
+                        }
+                        rejected.delete(key);
                         if (signal.aborted) {
                             await host.ui.imageMarkers({ saveId: floor.saveId, node: floor.node, expectedRaw: floor.raw, markers: [] }).catch(() => { });
                             return;
@@ -316,11 +335,18 @@ export function bindSifangImages(root, signal) {
             embedKeys.clear();
             metaKeys.clear();
             waitingControls.clear();
+            rejected.clear();
         }
-        if (['CHAT_CHANGED', 'MESSAGE_SWIPED', 'MESSAGE_UPDATED', 'MESSAGE_DELETED'].includes(event ?? '')) {
+        // GENERATION_ENDED is included: a floor that stopped being busy may register now.
+        if (['CHAT_CHANGED', 'MESSAGE_SWIPED', 'MESSAGE_UPDATED', 'MESSAGE_DELETED', 'GENERATION_ENDED'].includes(event ?? '')) {
+            const targeted = event !== 'CHAT_CHANGED' && messageId !== undefined;
             for (const group of registered.values()) {
-                if (event === 'CHAT_CHANGED' || messageId === undefined || group.floor.floor === messageId)
+                if (!targeted || group.floor.floor === messageId)
                     group.signature = '';
+            }
+            for (const [key, record] of rejected) {
+                if (!targeted || record.floor === messageId)
+                    rejected.delete(key);
             }
         }
         if (event === 'GENERATION_ENDED' || event === 'GENERATION_STOPPED')
@@ -356,6 +382,7 @@ export function bindSifangImages(root, signal) {
         embedKeys.clear();
         metaKeys.clear();
         waitingControls.clear();
+        rejected.clear();
         for (const item of registered.values())
             item.signature = '';
         schedule();
