@@ -1,5 +1,6 @@
 import type { ChatSnapshot } from './chat-host.js';
 import { requireSifangHost, type SifangFloor, type SifangSave } from './sifang-host.js';
+import { hostNoticeDue, resetHostNotices } from './host-notice.js';
 
 type Listener = (messageId?: number, event?: string) => void;
 const listeners = new Set<Listener>();
@@ -129,6 +130,7 @@ export async function initializeSifangChat(signal: AbortSignal): Promise<void> {
       || data && 'volume' in data && data.volume !== save.volume);
     if (native === 'save' || changedSave) {
       valid = false;
+      resetHostNotices();
       emit(undefined, 'CHAT_CHANGED');
     } else if (native === 'edit' || native === 'swipe' || native === 'remove') {
       // Only the changed floor is unavailable during its read. Other floors'
@@ -137,8 +139,15 @@ export async function initializeSifangChat(signal: AbortSignal): Promise<void> {
       if (typeof data?.node === 'string') invalidNodes.add(data.node);
       if (Array.isArray(data?.removed)) data.removed.forEach(node => { if (typeof node === 'string') invalidNodes.add(node); });
     }
-    void refresh(event, messageId)
-      .catch(error => { if (!signal.aborted) void host.ui.toast(error instanceof Error ? error.message : '正文同步失败。', 'fail').catch(() => {}); });
+    void refresh(event, messageId).catch(error => {
+      if (signal.aborted) return;
+      // The floor being rewritten is unreadable for every event of that rewrite, and the
+      // cache keeps its previous text until the new one lands. Only a failure that does
+      // not concern the floor in flight is worth telling the user about, once per minute.
+      if (messageId === floors.at(-1)?.floor) return;
+      const text = error instanceof Error ? error.message : '正文同步失败。';
+      if (hostNoticeDue(text)) void host.ui.toast(text, 'fail').catch(() => {});
+    });
   }));
   unsubs.push(host.on('stream', () => { if (!signal.aborted) { streaming = true; ++activity; } }));
   signal.addEventListener('abort', () => {
@@ -146,7 +155,7 @@ export async function initializeSifangChat(signal: AbortSignal): Promise<void> {
     if (lifecycle !== signal) return;
     ++revision; valid = false; streaming = false; floors = []; save = null; identity = null; initializing = undefined;
     currentRefresh = undefined;
-    invalidNodes.clear(); invalidFloors.clear();
+    invalidNodes.clear(); invalidFloors.clear(); resetHostNotices();
   }, { once: true });
   initializing = refresh('CHAT_CHANGED').catch(error => {
     // Settings can open before a game has been bound. Keep subscriptions alive

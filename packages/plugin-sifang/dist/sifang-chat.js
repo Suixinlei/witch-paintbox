@@ -1,4 +1,5 @@
 import { requireSifangHost } from './sifang-host.js';
+import { hostNoticeDue, resetHostNotices } from './host-notice.js';
 const listeners = new Set();
 const snapshots = new WeakMap();
 let floors = [];
@@ -133,6 +134,7 @@ export async function initializeSifangChat(signal) {
             || data && 'volume' in data && data.volume !== save.volume);
         if (native === 'save' || changedSave) {
             valid = false;
+            resetHostNotices();
             emit(undefined, 'CHAT_CHANGED');
         }
         else if (native === 'edit' || native === 'swipe' || native === 'remove') {
@@ -146,9 +148,18 @@ export async function initializeSifangChat(signal) {
                 data.removed.forEach(node => { if (typeof node === 'string')
                     invalidNodes.add(node); });
         }
-        void refresh(event, messageId)
-            .catch(error => { if (!signal.aborted)
-            void host.ui.toast(error instanceof Error ? error.message : '正文同步失败。', 'fail').catch(() => { }); });
+        void refresh(event, messageId).catch(error => {
+            if (signal.aborted)
+                return;
+            // The floor being rewritten is unreadable for every event of that rewrite, and the
+            // cache keeps its previous text until the new one lands. Only a failure that does
+            // not concern the floor in flight is worth telling the user about, once per minute.
+            if (messageId === floors.at(-1)?.floor)
+                return;
+            const text = error instanceof Error ? error.message : '正文同步失败。';
+            if (hostNoticeDue(text))
+                void host.ui.toast(text, 'fail').catch(() => { });
+        });
     }));
     unsubs.push(host.on('stream', () => { if (!signal.aborted) {
         streaming = true;
@@ -168,6 +179,7 @@ export async function initializeSifangChat(signal) {
         currentRefresh = undefined;
         invalidNodes.clear();
         invalidFloors.clear();
+        resetHostNotices();
     }, { once: true });
     initializing = refresh('CHAT_CHANGED').catch(error => {
         // Settings can open before a game has been bound. Keep subscriptions alive

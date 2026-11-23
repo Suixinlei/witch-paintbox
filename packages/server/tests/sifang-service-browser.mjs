@@ -457,6 +457,53 @@ try {
   assert.equal(await page.evaluate(() => fixture.notices.filter(text => text.includes('这个回复不存在')).length), 1);
   assert.deepEqual(errors, []);
 
+  // Rewriting the latest floor: the host refuses that floor on every event of the rewrite,
+  // and refuses to read it too. Neither may ask again per event, nor notice per event.
+  const rewrite = await page.evaluate(async () => {
+    const refusals = () => fixture.notices.filter(text => text.includes('这个回复不存在、已切换或还在生成')).length;
+    const text = '这个回复不存在、已切换或还在生成';
+    const originalMarkers = window.Sifang.ui.imageMarkers.bind(window.Sifang.ui);
+    fixture.rejectCalls = 0;
+    const noticedBefore = refusals();
+    const registeredBefore = fixture.markerCalls.filter(node => node === 'fixture-node').length;
+    window.Sifang.ui.imageMarkers = async options => {
+      if (options.node === 'fixture-node') { fixture.rejectCalls++; throw new Error(text); }
+      return originalMarkers(options);
+    };
+    const events = async () => {
+      for (let index = 0; index < 8; index++) {
+        fixture.emit('edit', { floor: fixture.floor.floor, node: fixture.floor.node });
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+    };
+    await events();
+    const writes = { calls: fixture.rejectCalls, notices: refusals() - noticedBefore };
+
+    const originalFloor = window.Sifang.game.floor.bind(window.Sifang.game);
+    fixture.readCalls = 0;
+    window.Sifang.game.floor = async index => {
+      if (index === undefined || index === fixture.floor.floor) { fixture.readCalls++; throw new Error(text); }
+      return originalFloor(index);
+    };
+    await events();
+    const reads = { calls: fixture.readCalls, notices: refusals() - noticedBefore - writes.notices };
+    window.Sifang.game.floor = originalFloor;
+    window.Sifang.ui.imageMarkers = originalMarkers;
+    fixture.emit('floor', { floor: fixture.floor.floor, node: fixture.floor.node });
+    return { writes, reads, registeredBefore };
+  });
+  // The floor being rewritten is expected to refuse: no notice at all, and a retry on the
+  // backoff rather than once per event.
+  assert.equal(rewrite.writes.notices, 0);
+  assert.ok(rewrite.writes.calls <= 3, `marker writes during the rewrite: ${rewrite.writes.calls}`);
+  // The unreadable floor keeps its own refresh failures, but the same words are not repeated.
+  assert.equal(rewrite.reads.notices, 0);
+  assert.ok(rewrite.reads.calls <= 16, `floor reads during the rewrite: ${rewrite.reads.calls}`);
+  // Once the rewrite is over the floor registers again, without another event.
+  await page.waitForFunction(before => fixture.markerCalls.filter(node => node === 'fixture-node').length > before,
+    rewrite.registeredBefore, { timeout: 15_000 });
+  assert.deepEqual(errors, []);
+
   await admin.locator('#logout').click();
   await admin.locator('#auth').waitFor();
   assert.equal(await admin.evaluate(() => sessionStorage.getItem('witch-paintbox.admin-token')), null);

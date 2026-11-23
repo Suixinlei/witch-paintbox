@@ -10,6 +10,7 @@ import { sifangHost, type SifangFloor } from './sifang-host.js';
 import { readSifangFloor, readSifangFloors, isSifangFloorPending } from './sifang-chat.js';
 import { clearSifangBatch, sifangBatchPicture } from './sifang-batch.js';
 import { nativeTarget, type FloorTarget } from './pet-targets.js';
+import { hostNoticeDue, resetHostNotices } from './host-notice.js';
 
 interface NativeControl {
   id: string;
@@ -30,21 +31,54 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
   if (!host || signal.aborted) return;
   const controls = new Map<string, NativeControl>();
   const registered = new Map<string, { floor: SifangFloor; signature: string }>();
-  // Registrations the host refused (floor gone, save switched, or still generating).
-  // They are retried only when that floor itself changes, never on every render.
-  const rejected = new Map<string, { signature: string; floor: number }>();
+  // Floors the host refused (gone, switched away, or still being rewritten). A refusal
+  // lasts until that floor is written again: it is retried on a slow backoff instead of
+  // on every chat event, and it reaches the user once, not once per event.
+  const refused = new Map<string, {
+    signature: string; floor: number; at: number; told: boolean; retry?: ReturnType<typeof setTimeout>;
+  }>();
   let version = 0;
   let rendering = false;
   let dirty = false;
-  let errorText = '';
 
+  /** A floor the host is rewriting answers every event with a rejection; ask it again slowly. */
+  const REFUSE_RETRY = 5_000;
+  const floorKey = (floor: Pick<SifangFloor, 'saveId' | 'node'>): string => JSON.stringify([floor.saveId, floor.node]);
   const report = (error: unknown) => {
     if (signal.aborted) return;
     const text = error instanceof Error ? error.message : '配图显示接口未能完成操作。';
-    if (text === errorText) return;
-    errorText = text;
+    if (!hostNoticeDue(text)) return;
     void host.ui.toast(text, 'fail').catch(() => {});
   };
+  function forgetRefusal(key: string): void {
+    const record = refused.get(key);
+    if (record?.retry) clearTimeout(record.retry);
+    refused.delete(key);
+  }
+  function forgetRefusals(): void {
+    for (const record of refused.values()) if (record.retry) clearTimeout(record.retry);
+    refused.clear();
+  }
+  /** Remember a refused floor and say so once per refusal, however often the host repeats itself.
+   *  The retry timer asks again on its own: a quiet chat must not leave the floor unregistered. */
+  function refuse(key: string, floor: SifangFloor, signature: string, error: unknown): void {
+    const previous = refused.get(key);
+    if (previous?.retry) clearTimeout(previous.retry);
+    const told = previous?.told ?? false;
+    // The floor being rewritten is the last one: the host refuses it until the new text
+    // lands, and the retry registers it then. Only an unexpected floor is worth a notice.
+    const expected = floor.floor === imageChatContext()?.latestMessageId;
+    refused.set(key, { signature, floor: floor.floor, at: Date.now(), told: told || !expected });
+    const record = refused.get(key)!;
+    record.retry = setTimeout(() => {
+      record.retry = undefined;
+      if (refused.get(key) !== record) return;
+      // The backoff has been served; let the next pass ask again even without a new event.
+      record.at = 0; record.signature = '';
+      schedule();
+    }, REFUSE_RETRY);
+    if (!told && !expected) report(error);
+  }
   function isCurrent(item: NativeControl): boolean {
     if (signal.aborted || controls.get(item.entry.key) !== item || servicePolicy()?.parseImageMarkers === false) return false;
     if (isSifangFloorPending(item.floor.saveId, item.floor.node)) return true;
@@ -62,7 +96,9 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
   }, () => 1);
 
   async function update(item: NativeControl): Promise<void> {
-    if (isSifangFloorPending(item.floor.saveId, item.floor.node) || item.floor.busy || item.updating || !item.registered || !item.view || signal.aborted) return;
+    const key = floorKey(item.floor);
+    if (isSifangFloorPending(item.floor.saveId, item.floor.node) || item.floor.busy || refused.has(key)
+      || item.updating || !item.registered || !item.view || signal.aborted) return;
     item.updating = true;
     try {
       let sent = -1;
@@ -74,7 +110,12 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
           state: view.state, status: view.status, veiled: view.veiled, ...(sendBlob ? { blob: view.blob } : {}) });
         if (sendBlob) item.lastBlob = view.blob;
       }
-    } catch (error) { report(error); }
+    } catch (error) {
+      // The floor went away mid-update. Stop sending its view and let registration retry it.
+      refuse(key, item.floor, '', error);
+      const entry = registered.get(key);
+      if (entry) entry.signature = '';
+    }
     finally { item.updating = false; }
   }
 
@@ -231,17 +272,17 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
           const signature = JSON.stringify([floor.raw, markers]);
           if (registered.get(key)?.signature !== signature) {
             // A busy or refused floor must not block every other floor's pictures; retry
-            // only after this floor changes (its text, or an event naming it).
-            if (floor.busy || rejected.get(key)?.signature === signature) continue;
+            // it on the backoff, never once per chat event.
+            const refusal = refused.get(key);
+            if (floor.busy || refusal && (refusal.signature === signature || Date.now() - refusal.at < REFUSE_RETRY)) continue;
             items.forEach(item => { item.registered = false; });
             try {
               await host!.ui.imageMarkers({ saveId: floor.saveId, node: floor.node, expectedRaw: floor.raw, markers });
             } catch (error) {
-              rejected.set(key, { signature, floor: floor.floor });
-              report(error);
+              refuse(key, floor, signature, error);
               continue;
             }
-            rejected.delete(key);
+            forgetRefusal(key);
             if (signal.aborted) {
               await host!.ui.imageMarkers({ saveId: floor.saveId, node: floor.node, expectedRaw: floor.raw, markers: [] }).catch(() => {});
               return;
@@ -257,7 +298,6 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
             .map(({ entry }) => entry.key));
           automatic.update(candidates, enabled, handled);
           if (handled.size) clearSifangBatch();
-          errorText = '';
         }
       }
     } catch (error) { report(error); }
@@ -279,7 +319,8 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
     // A different save's keys never match this chat again; drop its queues without
     // disturbing the departing controls, which the next render disposes anyway.
     if (event === 'CHAT_CHANGED') {
-      restored.clear(); saved.clear(); embedKeys.clear(); metaKeys.clear(); waitingControls.clear(); rejected.clear();
+      restored.clear(); saved.clear(); embedKeys.clear(); metaKeys.clear(); waitingControls.clear();
+      forgetRefusals(); resetHostNotices();
     }
     // GENERATION_ENDED is included: a floor that stopped being busy may register now.
     if (['CHAT_CHANGED', 'MESSAGE_SWIPED', 'MESSAGE_UPDATED', 'MESSAGE_DELETED', 'GENERATION_ENDED'].includes(event ?? '')) {
@@ -287,8 +328,10 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
       for (const group of registered.values()) {
         if (!targeted || group.floor.floor === messageId) group.signature = '';
       }
-      for (const [key, record] of rejected) {
-        if (!targeted || record.floor === messageId) rejected.delete(key);
+      // A refused floor may be writable again, but the backoff still decides when to ask,
+      // and the refusal keeps its report so a rewrite cannot repeat the same notice.
+      for (const [key, record] of refused) {
+        if (!targeted || record.floor === messageId) record.signature = '';
       }
     }
     if (event === 'GENERATION_ENDED' || event === 'GENERATION_STOPPED') automatic.settled();
@@ -311,7 +354,8 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
       item.control.dispose();
     }
     controls.clear();
-    restored.clear(); saved.clear(); embedKeys.clear(); metaKeys.clear(); waitingControls.clear(); rejected.clear();
+    restored.clear(); saved.clear(); embedKeys.clear(); metaKeys.clear(); waitingControls.clear();
+    forgetRefusals(); resetHostNotices();
     for (const item of registered.values()) item.signature = '';
     schedule();
   }, { signal });
@@ -327,6 +371,7 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
       void host.ui.imageMarkers({ saveId: floor.saveId, node: floor.node, expectedRaw: floor.raw, markers: [] }).catch(() => {});
     }
     registered.clear();
+    forgetRefusals();
   }, { once: true });
   schedule();
 }
