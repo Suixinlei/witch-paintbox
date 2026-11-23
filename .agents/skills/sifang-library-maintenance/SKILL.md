@@ -22,8 +22,9 @@ node .agents/skills/sifang-library-maintenance/scripts/paintbox.mjs <命令>
 - `list` —— 全部角色与通用服装的紧凑清单（id、名称、别名、服装名、默认服装、是否有图）。先看这个。
 - `show <角色名或id>` —— 单个角色完整资料（appearance、negative、各服装 tags）。`show <名> --shared` 看通用服装 tags。
 - `portrait <角色名或id> [--file 路径]` —— 把已有角色图导出成文件查看。
-- `draw --character <角色> [--outfit <已有服装> | --tags <新服装tags>] [--extra <场景/表情tags>] [--file 路径]`
+- `draw --character <角色> [--outfit <已有服装> | --tags <新服装tags>] [--extra <场景/表情tags>] [--size 832x1216] [--file 路径]`
   —— 用服务配置里的 NAI 画师串/参数出预览图：positive = 画师串 + 角色 appearance + 服装 tags + extra，negative = 全局负面 + 角色负面。
+  `--size` 覆盖服务默认画幅，竖版人设图用 `832x1216`；可选 `832x1216 / 1216x832 / 1024x1024 / 768x1344 / 1344x768 / 896x1152 / 1152x896`。
   新角色或完全自定义用 `draw --positive <提示词> [--negative <提示词>] [--label 名]`（raw 模式不含画师串，需要时自己加）。
   返回 `{file, seed, width, height, historyId}`，图片落在临时目录，把 file 给用户看。
 - `apply <ops.json>` —— 按操作数组改配置并写回服务。本地先用仓库 `parseArchive` 校验，失败不写入；revision 冲突返回 409，重新 list/show 再改。

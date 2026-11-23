@@ -14,6 +14,7 @@ const { parseArchive } = await import(dist('config-archive.js'));
 
 const PORTRAIT_DIR = join(tmpdir(), 'witch-paintbox-portraits');
 const DRAW_LOCK = join(tmpdir(), 'witch-paintbox-draw.lock');
+const DRAW_SIZES = new Set(['832x1216', '1216x832', '1024x1024', '768x1344', '1344x768', '896x1152', '1152x896']);
 
 function fail(message) { console.error(JSON.stringify({ error: String(message) })); process.exit(1); }
 
@@ -152,11 +153,12 @@ async function cmdDraw(opts) {
       negative = opts.negative ?? nai.negative;
       label = opts.label ?? 'portrait';
     } else fail('draw 需要 --character <角色> 或 --positive <提示词>。');
+    if (opts.size !== undefined && !DRAW_SIZES.has(opts.size)) fail(`--size 只支持：${[...DRAW_SIZES].join(' / ')}。`);
     const id = randomUUID();
     const response = await request('/v1/images', {
       method: 'POST', type: 'application/json', timeout: 580000,
       body: JSON.stringify({
-        input: { prompt: { positive, negative, characters: [] } },
+        input: { prompt: { positive, negative, characters: [] }, ...(opts.size ? { size: opts.size } : {}) },
         history: { id, markerKey: JSON.stringify(['character', '四方世界·角色']), title: `${label} 人设图`, scenePrompt: positive, sourceName: '四方世界·角色' },
       }),
     });
