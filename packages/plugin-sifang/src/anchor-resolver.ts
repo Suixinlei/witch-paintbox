@@ -85,7 +85,7 @@ function mapTags(source: string, visit: (token: string, nested: boolean, active:
   return result + part(source.slice(start));
 }
 
-/** Expand saved content once. Unknown @names pass through as plain text; unknown #outfits still fail. */
+/** Expand saved content once. Unknown @names pass through as plain text; unknown #outfits drop to the default. */
 export function resolveAnchorPrompt(prompt: string, anchors: readonly CharacterAnchor[], sharedOutfits: readonly SharedOutfit[] = []): string {
   return resolveAnchorPromptFields(prompt, anchors, sharedOutfits).positive;
 }
@@ -96,11 +96,16 @@ export function resolveAnchorPromptFields(prompt: string, anchors: readonly Char
   for (const anchor of anchors) for (const name of [anchor.name, ...anchor.aliases]) names.set(name, anchor);
   const orderedNames = [...names.keys()].sort((a, b) => b.length - a.length);
   const shared = new Map(sharedOutfits.map(outfit => [outfit.name, outfit]));
+  // Models often tag a character's own outfit with # instead of @角色:服装. Outfit tags hold
+  // clothing only, so resolving them by name across the cast is safe; the first match wins.
+  const owned = new Map<string, string>();
+  for (const anchor of anchors) for (const outfit of anchor.outfits) if (!owned.has(outfit.name)) owned.set(outfit.name, outfit.tags);
+  const outfitTags = (body: string): string | null => shared.get(body)?.tags ?? owned.get(body) ?? null;
   let omitDefault = false;
   mapTags(prompt, (token, _nested, active) => {
     const bare = token.startsWith('#') ? referenceName(token.slice(1).trim()) : '';
     if (active && (alternateClothing.has(token.toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' '))
-      || (token.startsWith('#') && (bare === '无服装' || shared.has(bare))))) omitDefault = true;
+      || (token.startsWith('#') && (bare === '无服装' || outfitTags(bare) !== null)))) omitDefault = true;
     return token;
   });
 
@@ -122,12 +127,14 @@ export function resolveAnchorPromptFields(prompt: string, anchors: readonly Char
   const positive = mapTags(prompt, (token, nested, active) => {
     if (token.startsWith('#')) {
       const body = referenceName(token.slice(1).trim());
-      const outfit = shared.get(body);
-      if (outfit) return outfit.tags;
+      const tags = outfitTags(body);
+      if (tags !== null) return tags;
       // The reserved no-outfit word also works alone: character references keep only their appearance.
       if (body === '无服装') return '';
       // A pre-existing literal name beginning with # keeps its legacy meaning.
-      if (nested || !reference(token, false)) throw withFault(new Error(`通用服装“${body || '（空）'}”不存在，请检查标签。`), 'reference');
+      // Anything else is a guessed outfit: drop it so the characters keep their selected default
+      // instead of failing the whole draw.
+      if (nested || !reference(token, false)) return '';
     }
     const prefixed = token.startsWith('@');
     const match = prefixed ? reference(token, true) ?? (!nested ? reference(token, false) : null)

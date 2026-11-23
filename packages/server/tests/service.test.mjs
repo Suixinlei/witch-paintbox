@@ -32,7 +32,7 @@ test('Risu planning output keeps environmental tags global and expands unambiguo
   assert.deepEqual(prepared.characters.map(character => character.positive), ['white hair, holding a lantern', 'black hair, walking']);
 });
 
-test('reserved 无服装 works as a shared-outfit token while unknown names still fail', async () => {
+test('reserved 无服装 works as a shared-outfit token while unknown names fall back to the default', async () => {
   const anchors = [{
     id: 'sali', name: '莎莉', aliases: [], appearance: 'silver hair', negative: '',
     outfits: [{ id: 'daily', name: '日常装', tags: 'school uniform' }], selectedOutfitId: 'daily',
@@ -47,7 +47,13 @@ test('reserved 无服装 works as a shared-outfit token while unknown names stil
   assert.ok(!viaColon.characters[0].positive.includes('school uniform'));
   const dressed = await prepareImagePrompt('garden | @莎莉, #旅行装', '', '', 22, library);
   assert.ok(dressed.characters[0].positive.includes('travel dress'));
-  await assert.rejects(prepareImagePrompt('garden | @莎莉, #不存在的服装', '', '', 22, library), /不存在/);
+  const owned = await prepareImagePrompt('garden | @莎莉, #日常装', '', '', 22, library);
+  assert.ok(owned.characters[0].positive.includes('school uniform'));
+  assert.equal(owned.characters[0].positive.split('school uniform').length, 2);
+  const guessed = await prepareImagePrompt('garden | @莎莉, #不存在的服装', '', '', 22, library);
+  assert.ok(guessed.characters[0].positive.includes('silver hair'));
+  assert.ok(guessed.characters[0].positive.includes('school uniform'));
+  assert.ok(!guessed.characters[0].positive.includes('不存在的服装'));
 });
 
 test('standalone service plans once, returns a binary image once and keeps history across restart', { timeout: 65000 }, async () => {
