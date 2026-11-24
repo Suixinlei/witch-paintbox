@@ -4,7 +4,7 @@ import { hostNoticeDue, resetHostNotices } from './host-notice.js';
 
 type Listener = (messageId?: number, event?: string) => void;
 const listeners = new Set<Listener>();
-const snapshots = new WeakMap<ChatSnapshot, { floor: SifangFloor; latestNode?: string; length: number }>();
+const snapshots = new WeakMap<ChatSnapshot, { floor: SifangFloor; latestNode?: string }>();
 export type SifangFloorTarget = Pick<SifangFloor, 'saveId' | 'volume' | 'floor' | 'node'>;
 const DISPLAY_FLOORS = 3;
 let floors: SifangFloor[] = [];
@@ -22,6 +22,7 @@ let lifecycle: AbortSignal | undefined;
 let initializing: Promise<void> | undefined;
 let currentRefresh: { promise: Promise<void>; settled: boolean } | undefined;
 let needsFullRefresh = true;
+let layoutDirty = true;
 
 function chatId(value: SifangSave): string { return JSON.stringify(['sifang', value.id, value.volume]); }
 function sameSave(a: SifangSave, b: SifangSave): boolean { return a.id === b.id && a.volume === b.volume; }
@@ -56,6 +57,7 @@ function emit(messageId?: number, event?: string): void {
 function refresh(event: string, messageId?: number): Promise<void> {
   if (messageId !== undefined && event !== 'CHAT_CHANGED') invalidFloors.add(messageId);
   else needsFullRefresh = true;
+  if (event !== 'MESSAGE_UPDATED') layoutDirty = true;
   const ticket = ++revision;
   const previous = currentRefresh;
   const run = () => ticket === revision && !lifecycle?.aborted ? readFloors(event, messageId, ticket) : Promise.resolve();
@@ -78,6 +80,21 @@ async function readFloors(event: string, messageId: number | undefined, ticket: 
   if (save && !sameSave(save, before)) {
     valid = false;
     emit(undefined, 'CHAT_CHANGED');
+  }
+  // An edit keeps the floor layout. Check the native reply instead of copying the full directory.
+  const cached = floors.find(item => item.floor === messageId);
+  if (event === 'MESSAGE_UPDATED' && valid && !needsFullRefresh && !layoutDirty && cached
+    && invalidFloors.size === 1 && [...invalidNodes].every(node => node === cached.node)) {
+    const updated = await host.game.floor(cached.floor);
+    if (lifecycle?.aborted || ticket !== revision) return;
+    if (updated && belongs(updated, before) && updated.node === cached.node && updated.floor === cached.floor && updated.role === cached.role) {
+      checkFloor(updated);
+      floors[floors.indexOf(cached)] = updated;
+      invalidFloors.delete(cached.floor); invalidNodes.delete(cached.node);
+      streaming = activity !== seenActivity || floors.some(floor => floor.busy);
+      emit(messageId, event);
+      return;
+    }
   }
   const line = await host.game.floors();
   if (lifecycle?.aborted || ticket !== revision) return;
@@ -105,7 +122,7 @@ async function readFloors(event: string, messageId: number | undefined, ticket: 
   save = after;
   identity = characterIdentity();
   valid = true;
-  needsFullRefresh = false;
+  needsFullRefresh = false; layoutDirty = false;
   streaming = activity !== seenActivity || next.some(floor => floor.busy);
   invalidNodes.clear(); invalidFloors.clear();
   emit(messageId, switched ? 'CHAT_CHANGED' : event);
@@ -230,7 +247,7 @@ function snapshotFor(floor: SifangFloor, latestNode?: string): ChatSnapshot {
     chatId: chatId({ id: floor.saveId, volume: floor.volume, name: '' }), messageId: floor.floor,
     swipeId: Math.max(0, floor.version - 1), text: floor.raw,
   });
-  snapshots.set(snapshot, { floor, latestNode, length: floorIndex.length });
+  snapshots.set(snapshot, { floor, latestNode });
   return snapshot;
 }
 
@@ -260,10 +277,7 @@ export async function captureSifangAssistant(target?: SifangFloorTarget): Promis
     await assertSifangSnapshot(snapshot);
     return snapshot;
   }
-  // Capturing only touches the latest reply. A no-floor refresh would re-read every floor and
-  // re-send every marker image, freezing the page right after each insertion.
-  const cachedLatest = [...readSifangFloors()].reverse().find(floor => floor.role === 'assistant');
-  await refresh('MESSAGE_UPDATED', cachedLatest?.floor);
+  await awaitSifangChatRefresh();
   const host = requireSifangHost();
   const latest = await host.game.floor();
   if (latest) checkFloor(latest);
@@ -274,7 +288,7 @@ export async function captureSifangAssistant(target?: SifangFloorTarget): Promis
   if (!floor) throw new Error('最新回复已变化，请稍后重试。');
   requireIdle(floor);
   if (!floor.raw.trim()) throw new Error('最新 AI 回复为空。');
-  return snapshotFor(floor, latest.node);
+  return snapshotFor(latest, latest.node);
 }
 
 export async function assertSifangSnapshot(snapshot: ChatSnapshot): Promise<SifangFloor> {
@@ -282,19 +296,17 @@ export async function assertSifangSnapshot(snapshot: ChatSnapshot): Promise<Sifa
   if (!state) throw new Error('聊天或原回复已发生变化，本次结果没有写回。');
   const saved = state.floor;
   const host = requireSifangHost();
-  const [current, line, active, latest] = await Promise.all([
-    host.game.floor(saved.floor), host.game.floors(), host.game.save(), host.game.floor(),
+  const [active, latest, target] = await Promise.all([
+    host.game.save(), host.game.floor(), state.latestNode === undefined ? host.game.floor(saved.floor) : undefined,
   ]);
+  const current = state.latestNode === undefined ? target : latest;
   if (current) checkFloor(current);
   if (latest) checkFloor(latest);
   requireIdle(latest);
-  requireIdle(current);
-  const targetIsActive = line.some(item => item.floor === saved.floor && item.node === saved.node && item.role === 'assistant');
-  const latestChanged = state.latestNode !== undefined && (latest?.role !== 'assistant' || latest.node !== state.latestNode
-    || line.length !== state.length || [...line].reverse().find(item => item.role === 'assistant')?.node !== saved.node);
+  requireIdle(current ?? null);
   if (!active || !current || !belongs(saved, active) || !belongs(current, active) || !latest || !belongs(latest, active)
     || current.role !== 'assistant' || current.floor !== saved.floor || current.node !== saved.node
-    || current.version !== saved.version || current.raw !== snapshot.text || !targetIsActive || latestChanged) {
+    || current.version !== saved.version || current.raw !== snapshot.text) {
     throw new Error('聊天或原回复已发生变化，本次结果没有写回。');
   }
   return saved;
@@ -304,6 +316,7 @@ export async function replaceSifangAssistant(snapshot: ChatSnapshot, text: strin
   const saved = await assertSifangSnapshot(snapshot);
   signal?.throwIfAborted();
   if (text === snapshot.text) return snapshot;
+  const beforeWrite = revision;
   saving = true;
   let committed: SifangFloor;
   try {
@@ -311,10 +324,22 @@ export async function replaceSifangAssistant(snapshot: ChatSnapshot, text: strin
       saveId: saved.saveId, node: saved.node, volume: saved.volume, expectedRaw: snapshot.text, raw: text,
     });
     checkFloor(committed);
-    if (committed.node !== saved.node || committed.saveId !== saved.saveId || committed.volume !== saved.volume || committed.raw !== text) {
+    if (committed.floor !== saved.floor || committed.role !== 'assistant' || committed.node !== saved.node || committed.saveId !== saved.saveId || committed.volume !== saved.volume || committed.raw !== text) {
       throw new Error('独立前端未返回原楼层的保存确认，请重新打开该楼层检查。');
     }
   } finally { saving = false; }
-  await refresh('MESSAGE_UPDATED', saved.floor);
+  // A host may deliver its edit event before or after the write acknowledgement.
+  // Let an in-flight event win; otherwise install the acknowledged body directly.
+  await awaitSifangChatRefresh();
+  const index = floors.findIndex(floor => floor.floor === saved.floor && floor.node === saved.node);
+  if (valid && save && belongs(committed, save) && index >= 0) {
+    if (beforeWrite === revision) {
+      floors[index] = committed;
+      emit(committed.floor, 'MESSAGE_UPDATED');
+    } else if (floors[index].raw === saved.raw) {
+      // A different floor changed during the write. Recheck this floor before applying anything.
+      await refresh('MESSAGE_UPDATED', saved.floor);
+    }
+  }
   return snapshotFor(committed, snapshots.get(snapshot)?.latestNode);
 }

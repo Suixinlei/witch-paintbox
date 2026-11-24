@@ -22,6 +22,7 @@ interface NativeControl {
   needsPicture: boolean;
   updating: boolean;
   revision: number;
+  sentRevision?: number;
   control: ReturnType<typeof createSifangImageControl>;
 }
 
@@ -101,13 +102,13 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
       || item.updating || !item.registered || !item.view || signal.aborted) return;
     item.updating = true;
     try {
-      let sent = -1;
-      while (!signal.aborted && item.registered && isCurrent(item) && item.view && sent !== item.revision) {
-        sent = item.revision;
+      while (!signal.aborted && item.registered && isCurrent(item) && item.view && item.sentRevision !== item.revision) {
+        const revision = item.revision;
         const view = item.view;
         const blob = item.pendingBlob;
         await host!.ui.imageMarker({ saveId: item.floor.saveId, node: item.floor.node, id: item.id,
           state: view.state, status: view.status, veiled: view.veiled, ...(blob !== undefined ? { blob } : {}) });
+        item.sentRevision = revision;
         if (item.pendingBlob === blob) item.pendingBlob = undefined;
       }
     } catch (error) {
@@ -251,6 +252,7 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
               await host!.ui.imageMarkers({ saveId: floor.saveId, node: floor.node, expectedRaw: floor.raw, markers: [] }).catch(() => {});
               return;
             }
+            for (const item of items) ++item.revision;
             const replacing = registered.has(key);
             registered.set(key, { floor, signature });
             if (replacing) for (const item of items) if (item.pendingBlob === undefined) void item.control.redisplay();

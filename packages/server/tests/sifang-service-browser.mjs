@@ -214,7 +214,7 @@ try {
       raw: `历史楼层 ${index}`, text: `历史楼层 ${index}`,
     }));
     const line = [...history, floor].map(({ floor, node, role }) => ({ floor, node, role }));
-    window.fixture = { floor, history, line, context, writes: 0, floorReads: [], floorReadsAfterWrite: [], markers: [], markerCalls: [], view: null, views: {}, notices: [],
+    window.fixture = { floor, history, line, context, writes: 0, indexReads: 0, viewCalls: [], floorReads: [], floorReadsAfterWrite: [], markers: [], markerCalls: [], view: null, views: {}, notices: [],
       emit(name, value) { for (const callback of listeners.get(name) ?? []) callback(value); } };
     window.Sifang = {
       apiVersion: 1, capabilities: ['native-game', 'native-events', 'native-text-write', 'native-image-markers'],
@@ -224,7 +224,7 @@ try {
           if (fixture.writes) fixture.floorReadsAfterWrite.push(index);
           return { ...(index === floor.floor ? floor : history[index]) };
         },
-        async floors() { return line; },
+        async floors() { fixture.indexReads++; return line; },
         async save() { return { id: floor.saveId, name: 'Fixture', volume: null }; },
         async replaceText({ saveId, node, volume, expectedRaw, raw }) {
           const target = node === floor.node ? floor : history.find(item => item.node === node);
@@ -242,6 +242,7 @@ try {
           if (!markers.length) delete fixture.views[node];
         },
         async imageMarker(view) {
+          fixture.viewCalls.push(view.node);
           fixture.view = fixture.views[view.node] = { ...fixture.views[view.node], ...view };
         },
       },
@@ -508,6 +509,31 @@ try {
   await page.waitForFunction(before => fixture.markerCalls.filter(node => node === 'fixture-node').length > before,
     rewrite.registeredBefore, { timeout: 15_000 });
   assert.deepEqual(errors, []);
+
+  // A normal edit of the latest floor must not fetch the entire directory or notify its neighbours.
+  await page.evaluate(async () => {
+    const chat = await import('/packages/plugin-sifang/dist/sifang-chat.js');
+    const neighbour = fixture.history[1997];
+    window.Sifang.ui.imageMarkers = async ({ node, markers }) => {
+      fixture.markerCalls.push(node);
+      if (!markers.length) delete fixture.views[node];
+    };
+    fixture.emit('edit', { floor: neighbour.floor, node: neighbour.node });
+    await chat.awaitSifangChatRefresh();
+  });
+  await page.waitForFunction(() => fixture.views['history-1997']?.state === 'idle' && fixture.views['history-1997'].status === '', null, { timeout: 15000 });
+  const localCalls = await page.evaluate(async () => {
+    const chat = await import('/packages/plugin-sifang/dist/sifang-chat.js');
+    const before = fixture.indexReads;
+    const writes = fixture.writes;
+    fixture.floorReads.length = fixture.markerCalls.length = fixture.viewCalls.length = 0;
+    const snapshot = await chat.captureSifangAssistant();
+    await chat.replaceSifangAssistant(snapshot, snapshot.text + '\n补充正文。');
+    return { directory: fixture.indexReads - before, writes: fixture.writes - writes, floors: [...new Set(fixture.floorReads)] };
+  });
+  assert.deepEqual(localCalls, { directory: 0, writes: 1, floors: [1999] });
+  await page.waitForFunction(() => fixture.markerCalls.includes('fixture-node'));
+  assert.equal(await page.evaluate(() => [...fixture.viewCalls, ...fixture.markerCalls].some(node => node !== 'fixture-node')), false);
 
   // Slide the display window past a rendered image. Each new floor needs just its own body.
   await page.evaluate(async () => {
