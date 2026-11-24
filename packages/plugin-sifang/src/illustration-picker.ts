@@ -4,7 +4,7 @@ import { textLines } from './image-text-regions.js';
 import { bindPanelViewport } from './panel-viewport.js';
 import { emitPetEvent } from './pet-events.js';
 import { currentPreferences, MAX_EXCLUDED_TAGS, normalizeTagName, saveExcludedTags } from './settings.js';
-import { readSifangFloors, type SifangFloorTarget } from './sifang-chat.js';
+import { sifangFloorChoices, type SifangFloorTarget } from './sifang-chat.js';
 import { isSifangEnvironment } from './sifang-host.js';
 
 /** Reading and shopping-list state stay local; submitting uses the shared model pipeline. */
@@ -457,13 +457,13 @@ export function bindIllustrationPicker(root: ShadowRoot, signal: AbortSignal, pr
       if (saved.join('\n') !== excludedTags.join('\n')) { excludedTags = saved; selection = null; }
       if (floorPicker) {
         const previous = target && JSON.stringify([target.saveId, target.volume, target.node, target.floor]);
-        const floors = readSifangFloors();
+        const floors = sifangFloorChoices();
         floorChoices = new Map();
         const options = document.createDocumentFragment();
         options.append(new Option('最新回复', ''));
         const latest = floors.at(-1);
         for (const floor of [...floors].reverse()) {
-          if (floor.role !== 'assistant' || floor === latest || !floor.raw.trim()) continue;
+          if (floor.role !== 'assistant' || floor === latest) continue;
           const key = JSON.stringify([floor.saveId, floor.volume, floor.node, floor.floor]);
           floorChoices.set(key, floor);
           options.append(new Option(`第 ${floor.floor + 1} 楼${floor.name ? ` · ${floor.name.slice(0, 40)}` : ''}`, key));

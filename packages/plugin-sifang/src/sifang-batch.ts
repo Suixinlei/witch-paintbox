@@ -4,7 +4,10 @@ import type { BatchPicture } from './service-protocol.js';
 let pending: { text: string; pictures: ReadonlyMap<string, BatchPicture> } | undefined;
 
 export function stageSifangBatch(text: string, pictures: ReadonlyMap<string, BatchPicture>): () => void {
-  const batch = { text, pictures };
+  // Saved bytes already live on the service. Keep only completion markers until the render consumes them.
+  const markers = new Map<string, BatchPicture>();
+  for (const [key, picture] of pictures) markers.set(key, picture.error ? picture : {});
+  const batch = { text, pictures: markers };
   pending = batch;
   return () => { if (pending === batch) pending = undefined; };
 }

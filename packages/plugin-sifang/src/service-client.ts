@@ -138,6 +138,9 @@ async function readHistory<T extends { entries: WireHistoryEntry[] }>(path: stri
   if (!Array.isArray(value.entries) || value.entries.length !== blobs.length) throw new Error('独立服务图片历史格式无效。');
   return { ...value, entries: value.entries.map((entry, index) => ({ ...entry, blob: blobs[index] } as ImageHistoryEntry)) };
 }
+export async function readServiceHistoryImage(id: string, signal: AbortSignal): Promise<ImageHistoryEntry | undefined> {
+  return (await readHistory('history/image', { id }, signal)).entries[0];
+}
 export async function readServiceHistory(markerKey: string, signal?: AbortSignal, latest = false): Promise<ImageHistoryEntry[]> {
   return (await readHistory('history/marker', { markerKey, ...(latest ? { latest: true } : {}) }, signal)).entries;
 }

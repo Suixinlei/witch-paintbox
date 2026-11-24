@@ -214,12 +214,13 @@ try {
       raw: `历史楼层 ${index}`, text: `历史楼层 ${index}`,
     }));
     const line = [...history, floor].map(({ floor, node, role }) => ({ floor, node, role }));
-    window.fixture = { floor, history, context, writes: 0, floorReadsAfterWrite: [], markers: [], markerCalls: [], view: null, views: {}, notices: [],
+    window.fixture = { floor, history, line, context, writes: 0, floorReads: [], floorReadsAfterWrite: [], markers: [], markerCalls: [], view: null, views: {}, notices: [],
       emit(name, value) { for (const callback of listeners.get(name) ?? []) callback(value); } };
     window.Sifang = {
       apiVersion: 1, capabilities: ['native-game', 'native-events', 'native-text-write', 'native-image-markers'],
       game: {
         async floor(index = floor.floor) {
+          fixture.floorReads.push(index);
           if (fixture.writes) fixture.floorReadsAfterWrite.push(index);
           return { ...(index === floor.floor ? floor : history[index]) };
         },
@@ -236,7 +237,10 @@ try {
       },
       ui: {
         async toast(text) { fixture.notices.push(text); },
-        async imageMarkers({ node, markers }) { fixture.markerCalls.push(node); fixture.markers = markers; },
+        async imageMarkers({ node, markers }) {
+          fixture.markerCalls.push(node); fixture.markers = markers;
+          if (!markers.length) delete fixture.views[node];
+        },
         async imageMarker(view) {
           fixture.view = fixture.views[view.node] = { ...fixture.views[view.node], ...view };
         },
@@ -258,6 +262,7 @@ try {
   await page.getByLabel('访问令牌').fill(token);
   await page.getByRole('button', { name: '测试并保存' }).click();
   await page.locator('[data-service-status]').filter({ hasText: '独立服务已连接' }).waitFor();
+  assert.deepEqual(await page.evaluate(() => [...new Set(fixture.floorReads)].sort()), [1997, 1998, 1999]);
   assert.equal(await page.getByRole('button', { name: '接口配置' }).count(), 0);
   assert.equal(await page.getByRole('button', { name: '插件功能' }).count(), 0);
   assert.equal(await page.getByRole('link', { name: '打开服务配置页' }).getAttribute('href'), service + '/');
@@ -282,7 +287,7 @@ try {
   assert.match(await page.evaluate(() => fixture.view.status), /已保存图片/);
   assert.deepEqual(calls, ['/v1/chat/completions', '/v1/ai/generate-image']);
   assert.deepEqual(requests, ['/v1/plan']);
-  assert.deepEqual(historyReads, []);
+  assert.deepEqual(historyReads, [true]);
   assert.equal(await page.locator('.wp-gallery').count(), 0);
 
   await page.getByRole('button', { name: '关闭魔女画匣', exact: true }).click();
@@ -296,7 +301,7 @@ try {
   assert.equal(await viewer.locator('.wp-gallery-image').evaluate(image => image.naturalWidth), 64);
   await viewer.getByRole('button', { name: '关闭图片查看器' }).click();
   await viewer.waitFor({ state: 'hidden' });
-  assert.deepEqual(historyReads, [false]);
+  assert.deepEqual(historyReads, [true, false]);
   await viewer.waitFor({ state: 'detached' });
 
   const drawStarted = Promise.withResolvers();
@@ -388,7 +393,7 @@ try {
   assert.equal(latest.value.groups[0].entries.length, 1);
   assert.equal(latest.blobs.length, 1);
   assert.deepEqual(calls.slice(callsBeforePrompt), ['/v1/chat/completions']);
-  assert.deepEqual(historyReads, [false, true]);
+  assert.deepEqual(historyReads, [true, false, true]);
   const stores = await page.evaluate(async () => (await indexedDB.databases()).map(database => database.name));
   assert.deepEqual(stores, []);
 
@@ -405,7 +410,7 @@ try {
   assert.deepEqual(await page.evaluate(() => [fixture.writes, fixture.floor.raw]), [2, latestRaw]);
   assert.match(await page.evaluate(() => fixture.history[1].raw), /^历史楼层 1\s*<img>/);
   assert.equal(calls.at(-1), '/v1/ai/generate-image');
-  await page.waitForFunction(() => fixture.views['history-1']?.blob instanceof Blob);
+  assert.equal(await page.evaluate(() => fixture.markerCalls.includes('history-1')), false);
 
   await floorChoice.selectOption({ label: '第 4 楼 · 测试' });
   await picker.locator('button[data-unit]').first().click();
@@ -426,7 +431,7 @@ try {
   await picker.getByRole('status').filter({ hasText: '已返回 1 张图片' }).waitFor();
   assert.deepEqual(await page.evaluate(() => [fixture.writes, fixture.floor.raw]), [3, latestRaw]);
   assert.match(await page.evaluate(() => fixture.history[5].raw), /^历史楼层 5\s*<img>/);
-  await page.waitForFunction(() => fixture.views['history-5']?.blob instanceof Blob);
+  assert.equal(await page.evaluate(() => fixture.markerCalls.includes('history-5')), false);
   assert.deepEqual(errors, []);
 
   // A floor the host refuses (gone, switched, or still generating) must not block the
@@ -504,6 +509,29 @@ try {
     rewrite.registeredBefore, { timeout: 15_000 });
   assert.deepEqual(errors, []);
 
+  // Slide the display window past a rendered image. Each new floor needs just its own body.
+  await page.evaluate(async () => {
+    const { awaitSifangChatRefresh } = await import('/packages/plugin-sifang/dist/sifang-chat.js');
+    const latest = fixture.floor;
+    const line = fixture.line;
+    const extra = [];
+    const original = window.Sifang.game.floor;
+    window.Sifang.game.floor = async index => {
+      const added = index === undefined ? extra.at(-1) : extra.find(f => f.floor === index);
+      if (added) { fixture.floorReads.push(added.floor); return added; }
+      return original(index);
+    };
+    for (let i = 1; i <= 3; i++) {
+      const floor = { ...latest, floor: latest.floor + i, node: 'extra-' + i, role: 'user', raw: '继续', text: '继续' };
+      extra.push(floor); line.push({ floor: floor.floor, node: floor.node, role: floor.role });
+      fixture.floorReads.length = 0;
+      fixture.emit('floor', { floor: floor.floor, node: floor.node });
+      await awaitSifangChatRefresh();
+      if (fixture.floorReads.some(index => index !== floor.floor)) throw new Error('重读了未变更的旧楼正文');
+      if (i < 3 && !fixture.views[latest.node]?.blob) throw new Error('过早移除了最近三楼中的图片');
+    }
+  });
+  await page.waitForFunction(() => !fixture.views['fixture-node']);
   await admin.locator('#logout').click();
   await admin.locator('#auth').waitFor();
   assert.equal(await admin.evaluate(() => sessionStorage.getItem('witch-paintbox.admin-token')), null);

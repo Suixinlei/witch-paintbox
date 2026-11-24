@@ -1,7 +1,7 @@
 import { imageChatContext } from './chat-host.js';
 import { createImageGallery, type GalleryImage } from './image-gallery.js';
 import { notifyImageHistorySaved, deleteImageHistory, historyWasDeleted, type ImageHistoryChange, type ImageHistoryEntry } from './image-history.js';
-import { readServiceHistory, requestServiceImage } from './service-client.js';
+import { readServiceHistory, readServiceHistoryImage, requestServiceImage } from './service-client.js';
 import type { MarkerEntry } from './image-marker-history.js';
 import { currentPreferences } from './settings.js';
 import { awaitSifangChatRefresh } from './sifang-chat.js';
@@ -12,7 +12,7 @@ import type { FloorTarget } from './pet-targets.js';
 export interface NativeImageView {
   state: 'idle' | 'queued' | 'generating';
   status: string;
-  blob: Blob | null;
+  blob?: Blob | null;
   /** The new picture keeps its place in the frame but stays hidden while the desktop pet flies it in. */
   veiled: boolean;
 }
@@ -32,19 +32,25 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
   let request: AbortController | null = null;
   let phase: NativeImageView['state'] = 'idle';
   let status = '正在读取图片历史…';
-  let displayed: ImageHistoryEntry | undefined;
-  let unsavedId: string | undefined;
+  let displayed: Pick<ImageHistoryEntry, 'id' | 'createdAt'> | undefined;
+  // A failed save has no service copy; keep it downloadable while its frame exists.
+  let unsaved: ImageHistoryEntry | undefined;
+  function select(item?: ImageHistoryEntry) {
+    reloading?.abort(); reloading = undefined;
+    displayed = item && { id: item.id, createdAt: item.createdAt };
+  }
+  let reloading: AbortController | undefined;
   let historyAvailable = false;
   let gallery: { view: ReturnType<typeof createImageGallery>; controller: AbortController; items: GalleryImage[] } | undefined;
   let veils = 0;
   let veiled = false;
   const pendingHistory = new Set<ImageHistoryChange[]>();
   const historyKey = entry.historyKey;
-  function show() {
+  function show(blob?: Blob | null) {
     if (controller.signal.aborted) return;
-    hooks.update({ state: phase, status, blob: displayed?.blob ?? null, veiled });
+    hooks.update({ state: phase, status, blob, veiled });
   }
-  function report(text: string) { status = text; show(); }
+  function report(text: string, blob?: Blob | null) { status = text; show(blob); }
   const savedText = '已保存图片 · 点击查看历史';
   async function fetchHistory(key: string, signal: AbortSignal, latest = false) {
     const changes: ImageHistoryChange[] = [];
@@ -73,34 +79,35 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
     for (const item of old.values()) URL.revokeObjectURL(item.url);
   }
   async function openHistory() {
-    if ((!displayed && !savedShown) || gallery || controller.signal.aborted) return;
+    if (!displayed || gallery || controller.signal.aborted) return;
     const open = new AbortController();
     const view = createImageGallery(entry.marker.summary, open.signal, {
       onSelect(id) {
-        displayed = gallery?.items.find(item => item.entry.id === id)?.entry;
-        savedShown = Boolean(displayed);
-        show();
+        const item = gallery?.items.find(item => item.entry.id === id)?.entry;
+        select(item);
+        show(item?.blob ?? null);
       },
       async onDelete(id) {
-        if (historyKey && id !== unsavedId) await deleteImageHistory(id);
+        if (historyKey && id !== unsaved?.id) await deleteImageHistory(id);
         else remove({ deletedIds: [id] });
       },
     });
     const current = { view, controller: open, items: [] as GalleryImage[] };
     gallery = current;
     root.append(view.element);
-    if (displayed) showHistory(current, [displayed]);
+    if (unsaved) showHistory(current, [unsaved]);
     view.open();
     view.element.addEventListener('close', closeGallery, { signal: open.signal, once: true });
     if (!historyKey) return;
     try {
       const entries = await fetchHistory(historyKey, open.signal);
       if (gallery !== current) return;
-      const unsaved = current.items.find(item => item.entry.id === unsavedId)?.entry;
-      if (unsaved && !entries.some(item => item.id === unsaved.id)) entries.push(unsaved);
+      const local = unsaved;
+      if (local && !entries.some(item => item.id === local.id)) entries.push(local);
       if (!entries.some(item => item.id === displayed?.id)) {
-        displayed = entries.at(-1);
-        report(displayed ? savedText : '图片已清理，可重新生成。');
+        const item = entries.at(-1);
+        select(item);
+        report(displayed ? savedText : '图片已清理，可重新生成。', item?.blob ?? null);
       }
       showHistory(current, entries);
     } catch (error) {
@@ -109,12 +116,14 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
   }
   function remove(change: ImageHistoryChange) {
     if (!change.deletedIds?.length && change.before === undefined) return;
+    if (unsaved && historyWasDeleted(unsaved, change)) unsaved = undefined;
     for (const changes of pendingHistory) changes.push(change);
     const entries = gallery?.items.map(item => item.entry).filter(item => !historyWasDeleted(item, change));
     if (displayed && historyWasDeleted(displayed, change)) {
-      displayed = entries?.at(-1);
+      const item = entries?.at(-1);
+      select(item);
       if (!request) status = displayed ? savedText : '图片已清理，可重新生成。';
-      show();
+      show(item?.blob ?? null);
       if (!displayed && historyKey) void refreshLatest();
     }
     if (gallery && entries && entries.length !== gallery.items.length) showHistory(gallery, entries);
@@ -136,7 +145,6 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
 
   /** The batch loader injects the saved picture here; a failure keeps automatic draws from billing twice. */
   let settled = false;
-  let savedShown = false;
   let settleReady!: () => void;
   const ready = new Promise<void>(resolve => { settleReady = resolve; });
   function restore(entry: ImageHistoryEntry | undefined, failure?: string): void {
@@ -144,20 +152,9 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
     settled = true;
     settleReady();
     historyAvailable = failure === undefined;
-    if (!displayed) displayed = entry;
-    savedShown = Boolean(displayed);
-    if (!request) report(failure ?? (displayed ? savedText : ''));
-    else show();
-  }
-  /** Historical floors only learn whether a picture exists; the image loads when the user opens it. */
-  function restoreSaved(saved: boolean, failure?: string): void {
-    if (settled || controller.signal.aborted) return;
-    settled = true;
-    settleReady();
-    historyAvailable = failure === undefined;
-    savedShown = saved && failure === undefined;
-    if (!request) report(failure ?? (savedShown ? savedText : ''));
-    else show();
+    if (!displayed) select(entry);
+    if (!request) report(failure ?? (displayed ? savedText : ''), entry?.blob ?? null);
+    else show(entry?.blob ?? null);
   }
   async function refreshLatest() {
     try {
@@ -165,9 +162,10 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
       if (controller.signal.aborted) return;
       historyAvailable = true;
       if (displayed) return;
-      displayed = entries.at(-1);
-      if (!request) report(displayed ? savedText : '');
-      else show();
+      const item = entries.at(-1);
+      select(item);
+      if (!request) report(displayed ? savedText : '', item?.blob ?? null);
+      else show(item?.blob ?? null);
     } catch (error) {
       if (!controller.signal.aborted && !request) report(error instanceof Error ? error.message : '图片读取失败。');
     }
@@ -176,8 +174,9 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
     settled = true;
     settleReady();
     historyAvailable = true;
-    if (initial.entry) displayed = initial.entry;
-    report(initial.error ?? (displayed ? savedText : ''));
+    select(initial.entry);
+    if (initial.error) unsaved = initial.entry;
+    report(initial.error ?? (displayed ? savedText : ''), initial.entry?.blob ?? null);
   }
 
   async function generate(autoSignal?: AbortSignal): Promise<void> {
@@ -225,13 +224,13 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
       }
       const { history: stored, ...picture } = result;
       const item: ImageHistoryEntry = { ...picture, ...draft, createdAt: stored?.createdAt ?? Date.now() };
-      displayed = item;
+      select(item);
       const failure = stored?.error;
-      unsavedId = !stored || failure ? item.id : undefined;
+      unsaved = !stored || failure ? item : undefined;
       const message = failure ? `图片已生成，但历史未保存：${failure}`
         : historyKey ? savedText : '图片仅保留在当前页面，可下载保存。';
       if (gallery) showHistory(gallery, [...gallery.items.map(item => item.entry), item]);
-      report(message);
+      report(message, item.blob);
       if (stored && !failure) notifyImageHistorySaved(stored.id);
       if (pet) {
         const place = hooks.watch();
@@ -264,19 +263,31 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
     generate,
     async generateAutomatically(signal: AbortSignal) {
       await ready;
-      if (signal.aborted || !historyAvailable || displayed || savedShown || request) return;
+      if (signal.aborted || !historyAvailable || displayed || request) return;
       await generate(signal);
     },
     cancel() { request?.abort(); },
     open() { void openHistory(); },
     removeHistory: remove,
-    refresh: show,
+    async redisplay() {
+      const selected = displayed;
+      if (!selected || controller.signal.aborted) return;
+      if (unsaved?.id === selected.id) { show(unsaved.blob); return; }
+      if (!historyKey || reloading) return;
+      const load = new AbortController();
+      reloading = load;
+      try {
+        const item = await readServiceHistoryImage(selected.id, load.signal);
+        if (displayed === selected && !load.signal.aborted) show(item?.blob ?? null);
+      } catch (error) {
+        if (displayed === selected && !load.signal.aborted) report(error instanceof Error ? error.message : '图片读取失败。');
+      } finally { if (reloading === load) reloading = undefined; }
+    },
     restore,
-    restoreSaved,
     dispose() {
       if (!settled) { settled = true; settleReady(); }
-      controller.abort(); closeGallery();
-      displayed = undefined;
+      controller.abort(); reloading?.abort(); closeGallery();
+      displayed = undefined; unsaved = undefined;
     },
   };
 }

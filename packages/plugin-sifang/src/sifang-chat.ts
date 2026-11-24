@@ -6,7 +6,9 @@ type Listener = (messageId?: number, event?: string) => void;
 const listeners = new Set<Listener>();
 const snapshots = new WeakMap<ChatSnapshot, { floor: SifangFloor; latestNode?: string; length: number }>();
 export type SifangFloorTarget = Pick<SifangFloor, 'saveId' | 'volume' | 'floor' | 'node'>;
+const DISPLAY_FLOORS = 3;
 let floors: SifangFloor[] = [];
+let floorIndex: Array<Pick<SifangFloor, 'floor' | 'node' | 'role'>> = [];
 let save: SifangSave | null = null;
 let identity: { scope: string; name: string } | null = null;
 let valid = false;
@@ -23,7 +25,7 @@ let needsFullRefresh = true;
 
 function chatId(value: SifangSave): string { return JSON.stringify(['sifang', value.id, value.volume]); }
 function sameSave(a: SifangSave, b: SifangSave): boolean { return a.id === b.id && a.volume === b.volume; }
-function belongs(floor: SifangFloor, value: SifangSave): boolean { return floor.saveId === value.id && floor.volume === value.volume; }
+function belongs(floor: SifangFloorTarget, value: SifangSave): boolean { return floor.saveId === value.id && floor.volume === value.volume; }
 
 /** Only character metadata comes from the compatibility context; body text is always native. */
 function characterIdentity(): { scope: string; name: string } | null {
@@ -52,22 +54,24 @@ function emit(messageId?: number, event?: string): void {
 }
 
 function refresh(event: string, messageId?: number): Promise<void> {
-  if (event === 'MESSAGE_UPDATED' && messageId !== undefined) invalidFloors.add(messageId);
+  if (messageId !== undefined && event !== 'CHAT_CHANGED') invalidFloors.add(messageId);
   else needsFullRefresh = true;
-  const pending = { promise: readFloors(event, messageId), settled: false };
+  const ticket = ++revision;
+  const previous = currentRefresh;
+  const run = () => ticket === revision && !lifecycle?.aborted ? readFloors(event, messageId, ticket) : Promise.resolve();
+  const pending = { promise: previous && !previous.settled ? previous.promise.then(run, run) : run(), settled: false };
   currentRefresh = pending;
   void pending.promise.then(() => { pending.settled = true; }, () => { pending.settled = true; });
   return pending.promise;
 }
 
-async function readFloors(event: string, messageId?: number): Promise<void> {
+async function readFloors(event: string, messageId: number | undefined, ticket: number): Promise<void> {
   const host = requireSifangHost();
-  const ticket = ++revision;
   const seenActivity = activity;
   const before = await host.game.save();
   if (lifecycle?.aborted || ticket !== revision) return;
   if (!before?.id) {
-    valid = false; floors = []; save = null; identity = null;
+    valid = false; floorIndex = []; floors = []; save = null; identity = null;
     emit(undefined, 'CHAT_CHANGED');
     return;
   }
@@ -77,16 +81,12 @@ async function readFloors(event: string, messageId?: number): Promise<void> {
   }
   const line = await host.game.floors();
   if (lifecycle?.aborted || ticket !== revision) return;
-  // A text edit keeps the same floor layout. Reuse other bodies only when the
-  // active save and the host's floor list still match the cached layout.
-  const cached = new Map(floors.map(floor => [floor.floor, floor]));
-  const sameLayout = !needsFullRefresh && valid && save && sameSave(save, before)
-    && line.length === floors.length && line.every(item => {
-      const floor = cached.get(item.floor);
-      return floor?.node === item.node && floor.role === item.role;
-    });
-  const loaded = await Promise.all(line.map(item => sameLayout && !invalidFloors.has(item.floor) && !invalidNodes.has(item.node)
-    ? cached.get(item.floor)! : host.game.floor(item.floor)));
+  const recent = line.slice(-DISPLAY_FLOORS);
+  const reuse = !needsFullRefresh && valid && save && sameSave(save, before);
+  const loaded = await Promise.all(recent.map(item => {
+    const cached = reuse && floors.find(floor => floor.floor === item.floor && floor.node === item.node && floor.role === item.role);
+    return cached && !invalidFloors.has(item.floor) && !invalidNodes.has(item.node) ? cached : host.game.floor(item.floor);
+  }));
   const after = await host.game.save();
   if (lifecycle?.aborted || ticket !== revision) return;
   if (!after || !sameSave(before, after)) {
@@ -96,10 +96,11 @@ async function readFloors(event: string, messageId?: number): Promise<void> {
   }
   const next = loaded.filter((floor): floor is SifangFloor => floor !== null);
   next.forEach(checkFloor);
-  if (next.length !== line.length || next.some((floor, index) => !belongs(floor, before) || floor.node !== line[index].node)) {
+  if (next.length !== recent.length || next.some((floor, index) => !belongs(floor, before) || floor.node !== recent[index].node)) {
     throw new Error('楼层已变化，正在等待当前正文同步。');
   }
   const switched = !save || !sameSave(save, after);
+  floorIndex = line.map(({ floor, node, role }) => ({ floor, node, role }));
   floors = next.sort((a, b) => a.floor - b.floor);
   save = after;
   identity = characterIdentity();
@@ -153,7 +154,7 @@ export async function initializeSifangChat(signal: AbortSignal): Promise<void> {
   signal.addEventListener('abort', () => {
     unsubs.forEach(stop => stop());
     if (lifecycle !== signal) return;
-    ++revision; valid = false; streaming = false; floors = []; save = null; identity = null; initializing = undefined;
+    ++revision; valid = false; streaming = false; floorIndex = []; floors = []; save = null; identity = null; initializing = undefined;
     currentRefresh = undefined;
     invalidNodes.clear(); invalidFloors.clear(); resetHostNotices();
   }, { once: true });
@@ -164,6 +165,20 @@ export async function initializeSifangChat(signal: AbortSignal): Promise<void> {
     throw error;
   });
   return initializing;
+}
+
+export function sifangFloorChoices() {
+  if (!valid || !save) return [];
+  const { id: saveId, volume } = save;
+  return floorIndex.map(item => ({ ...item, saveId, volume, name: floors.find(f => f.node === item.node)?.name ?? identity?.name }));
+}
+
+export function hasSifangFloor(target: SifangFloorTarget): boolean {
+  return Boolean(valid && save && belongs(target, save) && floorIndex.some(item => item.floor === target.floor && item.node === target.node));
+}
+
+export function sifangSnapshotNode(snapshot: ChatSnapshot): string | undefined {
+  return snapshots.get(snapshot)?.floor.node;
 }
 
 export function readSifangFloors(): readonly SifangFloor[] {
@@ -215,7 +230,7 @@ function snapshotFor(floor: SifangFloor, latestNode?: string): ChatSnapshot {
     chatId: chatId({ id: floor.saveId, volume: floor.volume, name: '' }), messageId: floor.floor,
     swipeId: Math.max(0, floor.version - 1), text: floor.raw,
   });
-  snapshots.set(snapshot, { floor, latestNode, length: floors.length });
+  snapshots.set(snapshot, { floor, latestNode, length: floorIndex.length });
   return snapshot;
 }
 
@@ -235,7 +250,7 @@ export async function isSifangChatReady(): Promise<boolean> {
 export async function captureSifangAssistant(target?: SifangFloorTarget): Promise<ChatSnapshot> {
   if (target) {
     await awaitSifangChatRefresh();
-    const floor = readSifangFloor(target.floor);
+    const floor = readSifangFloor(target.floor) ?? (hasSifangFloor(target) ? await requireSifangHost().game.floor(target.floor) : null);
     if (!floor || floor.role !== 'assistant' || floor.node !== target.node
       || floor.saveId !== target.saveId || floor.volume !== target.volume) {
       throw new Error('所选楼层已变化，请重新选择。');

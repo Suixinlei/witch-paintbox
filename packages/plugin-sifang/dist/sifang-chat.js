@@ -2,7 +2,9 @@ import { requireSifangHost } from './sifang-host.js';
 import { hostNoticeDue, resetHostNotices } from './host-notice.js';
 const listeners = new Set();
 const snapshots = new WeakMap();
+const DISPLAY_FLOORS = 3;
 let floors = [];
+let floorIndex = [];
 let save = null;
 let identity = null;
 let valid = false;
@@ -46,24 +48,27 @@ function emit(messageId, event) {
     }
 }
 function refresh(event, messageId) {
-    if (event === 'MESSAGE_UPDATED' && messageId !== undefined)
+    if (messageId !== undefined && event !== 'CHAT_CHANGED')
         invalidFloors.add(messageId);
     else
         needsFullRefresh = true;
-    const pending = { promise: readFloors(event, messageId), settled: false };
+    const ticket = ++revision;
+    const previous = currentRefresh;
+    const run = () => ticket === revision && !lifecycle?.aborted ? readFloors(event, messageId, ticket) : Promise.resolve();
+    const pending = { promise: previous && !previous.settled ? previous.promise.then(run, run) : run(), settled: false };
     currentRefresh = pending;
     void pending.promise.then(() => { pending.settled = true; }, () => { pending.settled = true; });
     return pending.promise;
 }
-async function readFloors(event, messageId) {
+async function readFloors(event, messageId, ticket) {
     const host = requireSifangHost();
-    const ticket = ++revision;
     const seenActivity = activity;
     const before = await host.game.save();
     if (lifecycle?.aborted || ticket !== revision)
         return;
     if (!before?.id) {
         valid = false;
+        floorIndex = [];
         floors = [];
         save = null;
         identity = null;
@@ -77,16 +82,12 @@ async function readFloors(event, messageId) {
     const line = await host.game.floors();
     if (lifecycle?.aborted || ticket !== revision)
         return;
-    // A text edit keeps the same floor layout. Reuse other bodies only when the
-    // active save and the host's floor list still match the cached layout.
-    const cached = new Map(floors.map(floor => [floor.floor, floor]));
-    const sameLayout = !needsFullRefresh && valid && save && sameSave(save, before)
-        && line.length === floors.length && line.every(item => {
-        const floor = cached.get(item.floor);
-        return floor?.node === item.node && floor.role === item.role;
-    });
-    const loaded = await Promise.all(line.map(item => sameLayout && !invalidFloors.has(item.floor) && !invalidNodes.has(item.node)
-        ? cached.get(item.floor) : host.game.floor(item.floor)));
+    const recent = line.slice(-DISPLAY_FLOORS);
+    const reuse = !needsFullRefresh && valid && save && sameSave(save, before);
+    const loaded = await Promise.all(recent.map(item => {
+        const cached = reuse && floors.find(floor => floor.floor === item.floor && floor.node === item.node && floor.role === item.role);
+        return cached && !invalidFloors.has(item.floor) && !invalidNodes.has(item.node) ? cached : host.game.floor(item.floor);
+    }));
     const after = await host.game.save();
     if (lifecycle?.aborted || ticket !== revision)
         return;
@@ -97,10 +98,11 @@ async function readFloors(event, messageId) {
     }
     const next = loaded.filter((floor) => floor !== null);
     next.forEach(checkFloor);
-    if (next.length !== line.length || next.some((floor, index) => !belongs(floor, before) || floor.node !== line[index].node)) {
+    if (next.length !== recent.length || next.some((floor, index) => !belongs(floor, before) || floor.node !== recent[index].node)) {
         throw new Error('楼层已变化，正在等待当前正文同步。');
     }
     const switched = !save || !sameSave(save, after);
+    floorIndex = line.map(({ floor, node, role }) => ({ floor, node, role }));
     floors = next.sort((a, b) => a.floor - b.floor);
     save = after;
     identity = characterIdentity();
@@ -172,6 +174,7 @@ export async function initializeSifangChat(signal) {
         ++revision;
         valid = false;
         streaming = false;
+        floorIndex = [];
         floors = [];
         save = null;
         identity = null;
@@ -189,6 +192,18 @@ export async function initializeSifangChat(signal) {
         throw error;
     });
     return initializing;
+}
+export function sifangFloorChoices() {
+    if (!valid || !save)
+        return [];
+    const { id: saveId, volume } = save;
+    return floorIndex.map(item => ({ ...item, saveId, volume, name: floors.find(f => f.node === item.node)?.name ?? identity?.name }));
+}
+export function hasSifangFloor(target) {
+    return Boolean(valid && save && belongs(target, save) && floorIndex.some(item => item.floor === target.floor && item.node === target.node));
+}
+export function sifangSnapshotNode(snapshot) {
+    return snapshots.get(snapshot)?.floor.node;
 }
 export function readSifangFloors() {
     return valid ? floors.filter(floor => !invalidNodes.has(floor.node) && !invalidFloors.has(floor.floor)) : [];
@@ -242,7 +257,7 @@ function snapshotFor(floor, latestNode) {
         chatId: chatId({ id: floor.saveId, volume: floor.volume, name: '' }), messageId: floor.floor,
         swipeId: Math.max(0, floor.version - 1), text: floor.raw,
     });
-    snapshots.set(snapshot, { floor, latestNode, length: floors.length });
+    snapshots.set(snapshot, { floor, latestNode, length: floorIndex.length });
     return snapshot;
 }
 export async function isSifangChatReady() {
@@ -266,7 +281,7 @@ export async function isSifangChatReady() {
 export async function captureSifangAssistant(target) {
     if (target) {
         await awaitSifangChatRefresh();
-        const floor = readSifangFloor(target.floor);
+        const floor = readSifangFloor(target.floor) ?? (hasSifangFloor(target) ? await requireSifangHost().game.floor(target.floor) : null);
         if (!floor || floor.role !== 'assistant' || floor.node !== target.node
             || floor.saveId !== target.saveId || floor.volume !== target.volume) {
             throw new Error('所选楼层已变化，请重新选择。');

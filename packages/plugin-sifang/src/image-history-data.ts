@@ -72,6 +72,6 @@ export function historyTitle(entry: ImageHistoryEntry): string {
 
 export interface ImageHistoryChange { savedId?: string; deletedIds?: readonly string[]; before?: number }
 
-export function historyWasDeleted(entry: ImageHistoryEntry, change: ImageHistoryChange): boolean {
+export function historyWasDeleted(entry: Pick<ImageHistoryEntry, 'id' | 'createdAt'>, change: ImageHistoryChange): boolean {
   return Boolean(change.deletedIds?.includes(entry.id) || change.before !== undefined && entry.createdAt < change.before);
 }

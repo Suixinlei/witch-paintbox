@@ -4,9 +4,9 @@ import { markerEntries } from './image-marker-history.js';
 import { automaticImages } from './automatic-images.js';
 import { onImageHistoryChanged } from './image-history.js';
 import { createSifangImageControl } from './sifang-image-control.js';
-import { readServiceMarkerLatest, readServiceMarkerSaved } from './service-client.js';
+import { readServiceMarkerLatest } from './service-client.js';
 import { sifangHost } from './sifang-host.js';
-import { readSifangFloor, readSifangFloors, isSifangFloorPending } from './sifang-chat.js';
+import { hasSifangFloor, readSifangFloor, readSifangFloors, isSifangFloorPending } from './sifang-chat.js';
 import { clearSifangBatch, sifangBatchPicture } from './sifang-batch.js';
 import { nativeTarget } from './pet-targets.js';
 import { hostNoticeDue, resetHostNotices } from './host-notice.js';
@@ -100,11 +100,11 @@ export function bindSifangImages(root, signal) {
             while (!signal.aborted && item.registered && isCurrent(item) && item.view && sent !== item.revision) {
                 sent = item.revision;
                 const view = item.view;
-                const sendBlob = view.blob !== item.lastBlob;
+                const blob = item.pendingBlob;
                 await host.ui.imageMarker({ saveId: item.floor.saveId, node: item.floor.node, id: item.id,
-                    state: view.state, status: view.status, veiled: view.veiled, ...(sendBlob ? { blob: view.blob } : {}) });
-                if (sendBlob)
-                    item.lastBlob = view.blob;
+                    state: view.state, status: view.status, veiled: view.veiled, ...(blob !== undefined ? { blob } : {}) });
+                if (item.pendingBlob === blob)
+                    item.pendingBlob = undefined;
             }
         }
         catch (error) {
@@ -145,86 +145,37 @@ export function bindSifangImages(root, signal) {
         const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
         return `wp-${Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('')}`;
     }
-    /** Restoring a whole chat used to cost one request per marker; with thousands of floors even
-     * batched pictures would exhaust memory, so only the latest floor moves image bytes. */
-    const restored = new Map();
-    const saved = new Map();
-    const embedKeys = new Set();
-    const metaKeys = new Set();
-    const waitingControls = new Map();
+    // Only queued controls are retained. The host owns the pixels once its frame receives them.
+    const waiting = new Set();
     let loading = false;
     let loadTimer;
-    const EMBED_CHUNK = 12;
-    const META_CHUNK = 256;
     function wantLatest(item) {
-        const key = item.entry.historyKey;
-        if (!key) {
+        if (!item.entry.historyKey) {
             item.control.restore(undefined);
             return;
         }
-        if (restored.has(key)) {
-            item.control.restore(restored.get(key));
-            return;
-        }
-        if (saved.has(key)) {
-            item.control.restoreSaved(saved.get(key) !== undefined);
-            return;
-        }
-        const waiters = waitingControls.get(key);
-        if (waiters) {
-            waiters.add(item);
-            return;
-        } // Already queued or in flight.
-        waitingControls.set(key, new Set([item]));
-        (item.message.messageId === imageChatContext()?.latestMessageId ? embedKeys : metaKeys).add(key);
+        waiting.add(item);
         if (!loading && loadTimer === undefined)
             loadTimer = setTimeout(() => { loadTimer = undefined; void load(); }, 60);
     }
     async function load() {
-        if (loading || signal.aborted)
-            return;
         loading = true;
         try {
-            while (!signal.aborted && (embedKeys.size || metaKeys.size)) {
-                const embed = embedKeys.size > 0; // The latest floor's pictures come first.
-                const source = embed ? embedKeys : metaKeys;
-                const chunk = [...source].slice(0, embed ? EMBED_CHUNK : META_CHUNK);
-                chunk.forEach(key => source.delete(key));
+            while (waiting.size && !signal.aborted) {
+                const items = [...waiting].slice(0, 3);
+                for (const item of items)
+                    waiting.delete(item);
                 try {
-                    if (embed) {
-                        const groups = await readServiceMarkerLatest(chunk, signal);
-                        for (const key of chunk) {
-                            const entry = groups.get(key);
-                            restored.set(key, entry);
-                            saved.set(key, entry);
-                            waitingControls.get(key)?.forEach(item => item.control.restore(entry));
-                            waitingControls.delete(key);
-                        }
-                    }
-                    else {
-                        const groups = await readServiceMarkerSaved(chunk, signal);
-                        for (const key of chunk) {
-                            const meta = groups.get(key);
-                            saved.set(key, meta);
-                            waitingControls.get(key)?.forEach(item => item.control.restoreSaved(meta !== undefined));
-                            waitingControls.delete(key);
-                        }
-                    }
+                    const entries = await readServiceMarkerLatest([...new Set(items.map(item => item.entry.historyKey))], signal);
+                    for (const item of items)
+                        item.control.restore(entries.get(item.entry.historyKey));
                 }
                 catch (error) {
                     if (signal.aborted)
                         return;
                     report(error);
-                    const text = error instanceof Error ? error.message : '图片读取失败。';
-                    for (const key of chunk) {
-                        waitingControls.get(key)?.forEach(item => {
-                            if (embed)
-                                item.control.restore(undefined, text);
-                            else
-                                item.control.restoreSaved(false, text);
-                        });
-                        waitingControls.delete(key);
-                    }
+                    for (const item of items)
+                        item.control.restore(undefined, error instanceof Error ? error.message : '图片读取失败。');
                 }
             }
         }
@@ -248,6 +199,8 @@ export function bindSifangImages(root, signal) {
                 for (const [key, item] of controls) {
                     if (wanted.has(key))
                         continue;
+                    waiting.delete(item);
+                    item.pendingBlob = undefined;
                     item.registered = false;
                     item.control.dispose();
                     controls.delete(key);
@@ -268,14 +221,18 @@ export function bindSifangImages(root, signal) {
                             current: () => isCurrent(created),
                             pending: () => isSifangFloorPending(created.floor.saveId, created.floor.node),
                             latest: () => imageChatContext()?.latestMessageId === created.message.messageId,
-                            update(view) { created.view = view; ++created.revision; void update(created); },
+                            update({ blob, ...view }) {
+                                if (blob !== undefined)
+                                    created.pendingBlob = blob;
+                                created.view = view;
+                                ++created.revision;
+                                void update(created);
+                            },
                             floor: () => created.message.messageId,
                             watch: () => watchFrame(created),
-                        }, batch);
+                        }, batch?.error ? batch : undefined);
+                        created.needsPicture = !batch?.error;
                         controls.set(entry.key, created);
-                        // A batch picture already seeded the control; otherwise it joins the shared restore queue.
-                        if (!batch)
-                            wantLatest(created);
                         item = created;
                     }
                     item.entry = entry;
@@ -292,10 +249,13 @@ export function bindSifangImages(root, signal) {
                     dirty = true;
                     continue;
                 }
+                for (const key of refused.keys())
+                    if (!groups.has(key))
+                        forgetRefusal(key);
                 for (const [key, previous] of registered) {
                     if (groups.has(key))
                         continue;
-                    const current = floors.get(previous.floor.floor);
+                    const current = floors.get(previous.floor.floor) ?? (hasSifangFloor(previous.floor) ? previous.floor : undefined);
                     // Only a floor that still exists in the active save needs an explicit release;
                     // the host drops transient registrations when the save or the floor goes away,
                     // and calls for vanished targets are what it answers with a rejection.
@@ -327,14 +287,25 @@ export function bindSifangImages(root, signal) {
                             await host.ui.imageMarkers({ saveId: floor.saveId, node: floor.node, expectedRaw: floor.raw, markers: [] }).catch(() => { });
                             return;
                         }
+                        const replacing = registered.has(key);
                         registered.set(key, { floor, signature });
-                        items.forEach(item => { item.lastBlob = undefined; });
+                        if (replacing)
+                            for (const item of items)
+                                if (item.pendingBlob === undefined)
+                                    void item.control.redisplay();
                     }
                     if (signal.aborted || ticket !== version) {
                         dirty = true;
                         break;
                     }
-                    items.forEach(item => { item.registered = true; void update(item); });
+                    for (const item of items) {
+                        item.registered = true;
+                        if (item.needsPicture) {
+                            item.needsPicture = false;
+                            wantLatest(item);
+                        }
+                        void update(item);
+                    }
                 }
                 if (ticket === version && !signal.aborted) {
                     const handled = new Set(candidates.filter(({ message, entry }) => sifangBatchPicture(message.text, entry.historyKey))
@@ -371,14 +342,8 @@ export function bindSifangImages(root, signal) {
             item.control.cancel();
     });
     const offChat = watchChatRendering((messageId, _change, event) => {
-        // A different save's keys never match this chat again; drop its queues without
-        // disturbing the departing controls, which the next render disposes anyway.
+        // Refusals belong to the departing save.
         if (event === 'CHAT_CHANGED') {
-            restored.clear();
-            saved.clear();
-            embedKeys.clear();
-            metaKeys.clear();
-            waitingControls.clear();
             forgetRefusals();
             resetHostNotices();
         }
@@ -401,20 +366,6 @@ export function bindSifangImages(root, signal) {
         schedule();
     });
     const offHistory = onImageHistoryChanged(change => {
-        // Saved or cleaned images make the cached newest pictures stale; deletions only drop the affected keys.
-        if (change.savedId !== undefined || change.before !== undefined) {
-            restored.clear();
-            saved.clear();
-        }
-        else if (change.deletedIds?.length) {
-            const deleted = new Set(change.deletedIds);
-            for (const [key, entry] of restored)
-                if (entry && deleted.has(entry.id))
-                    restored.set(key, undefined);
-            for (const [key, entry] of saved)
-                if (entry && deleted.has(entry.id))
-                    saved.set(key, undefined);
-        }
         controls.forEach(item => item.control.removeHistory(change));
     });
     window.addEventListener('witch-paintbox:service-changed', () => {
@@ -424,11 +375,7 @@ export function bindSifangImages(root, signal) {
             item.control.dispose();
         }
         controls.clear();
-        restored.clear();
-        saved.clear();
-        embedKeys.clear();
-        metaKeys.clear();
-        waitingControls.clear();
+        waiting.clear();
         forgetRefusals();
         resetHostNotices();
         for (const item of registered.values())
@@ -445,6 +392,8 @@ export function bindSifangImages(root, signal) {
         offHistory();
         automatic.dispose();
         clearTimeout(loadTimer);
+        clearSifangBatch();
+        waiting.clear();
         for (const item of controls.values()) {
             item.registered = false;
             item.control.dispose();

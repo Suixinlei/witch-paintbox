@@ -1,4 +1,4 @@
-import { assertChatSnapshot, captureLatestAssistant, imageChatContext, readAssistantMessages, replaceAssistantMessage, type ChatSnapshot } from './chat-host.js';
+import { assertChatSnapshot, captureLatestAssistant, imageChatContext, replaceAssistantMessage, type ChatSnapshot } from './chat-host.js';
 import { applyImageInsertions, createImageInsertionPlan, createSelectedImageInsertionPlan,
   selectImageInsertionPoints, type ImageInsertionPlan } from './image-insertion.js';
 import { normalizeIllustrationItems, type IllustrationItem } from './illustration-selection.js';
@@ -9,7 +9,7 @@ import { stageSifangBatch } from './sifang-batch.js';
 import { notifyImageHistorySaved } from './image-history.js';
 import { imagePlanningInput } from './image-planning.js';
 import { isSifangEnvironment } from './sifang-host.js';
-import { captureSifangAssistant, type SifangFloorTarget } from './sifang-chat.js';
+import { captureSifangAssistant, readSifangFloor, sifangSnapshotNode, type SifangFloorTarget } from './sifang-chat.js';
 import type { ImageInsertionResult } from './image-insertion.js';
 import { emitPetEvent, petFault, petTaskId, withFault } from './pet-events.js';
 import { imageSizeMode } from './image-size-mode.js';
@@ -95,17 +95,16 @@ export class ChatProcessor {
         let draw;
         if (options.draw === 'manual' || (options.draw && preferences.autoGenerateImages)) {
           const context = imageChatContext();
-          const message = readAssistantMessages().find(item => item.chatId === snapshot.chatId
-            && item.messageId === snapshot.messageId && item.text === snapshot.text);
-          if (!context || !message?.historyId) throw withFault(new Error('当前楼层无法确认配图身份，请重新打开存档。'), 'host');
-          draw = { scope: message.scope, chatId: message.chatId, historyId: message.historyId,
+          const historyId = sifangSnapshotNode(snapshot);
+          if (!context || context.chatId !== snapshot.chatId || !historyId) throw withFault(new Error('当前楼层无法确认配图身份，请重新打开存档。'), 'host');
+          draw = { scope: context.scope, chatId: context.chatId, historyId,
             sourceName: context.name, delay: options.draw === 'manual' ? 0 : preferences.autoImageDelay };
         }
         const reply = await requestServicePlan({
           original: snapshot.text, excludedTags: preferences.excludedTags, items: selection?.items, draw,
         }, controller.signal);
         result = reply.result;
-        if (draw) discardBatch = stageSifangBatch(result.text, reply.pictures);
+        if (draw && readSifangFloor(snapshot.messageId)?.node === sifangSnapshotNode(snapshot)) discardBatch = stageSifangBatch(result.text, reply.pictures);
       } else {
         const original = prepared!.plan;
         const items = selection ? normalizeIllustrationItems(original, selection.items) : undefined;

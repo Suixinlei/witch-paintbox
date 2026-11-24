@@ -139,6 +139,9 @@ async function readHistory(path, query, signal) {
         throw new Error('独立服务图片历史格式无效。');
     return { ...value, entries: value.entries.map((entry, index) => ({ ...entry, blob: blobs[index] })) };
 }
+export async function readServiceHistoryImage(id, signal) {
+    return (await readHistory('history/image', { id }, signal)).entries[0];
+}
 export async function readServiceHistory(markerKey, signal, latest = false) {
     return (await readHistory('history/marker', { markerKey, ...(latest ? { latest: true } : {}) }, signal)).entries;
 }

@@ -3,7 +3,7 @@ import { textLines } from './image-text-regions.js';
 import { bindPanelViewport } from './panel-viewport.js';
 import { emitPetEvent } from './pet-events.js';
 import { currentPreferences, MAX_EXCLUDED_TAGS, normalizeTagName, saveExcludedTags } from './settings.js';
-import { readSifangFloors } from './sifang-chat.js';
+import { sifangFloorChoices } from './sifang-chat.js';
 import { isSifangEnvironment } from './sifang-host.js';
 /** Reading and shopping-list state stay local; submitting uses the shared model pipeline. */
 export function bindIllustrationPicker(root, signal, processor) {
@@ -495,13 +495,13 @@ export function bindIllustrationPicker(root, signal, processor) {
             }
             if (floorPicker) {
                 const previous = target && JSON.stringify([target.saveId, target.volume, target.node, target.floor]);
-                const floors = readSifangFloors();
+                const floors = sifangFloorChoices();
                 floorChoices = new Map();
                 const options = document.createDocumentFragment();
                 options.append(new Option('最新回复', ''));
                 const latest = floors.at(-1);
                 for (const floor of [...floors].reverse()) {
-                    if (floor.role !== 'assistant' || floor === latest || !floor.raw.trim())
+                    if (floor.role !== 'assistant' || floor === latest)
                         continue;
                     const key = JSON.stringify([floor.saveId, floor.volume, floor.node, floor.floor]);
                     floorChoices.set(key, floor);
