@@ -7,6 +7,7 @@ const listeners = new Set<Listener>();
 const snapshots = new WeakMap<ChatSnapshot, { floor: SifangFloor; latestNode?: string }>();
 export type SifangFloorTarget = Pick<SifangFloor, 'saveId' | 'volume' | 'floor' | 'node'>;
 const DISPLAY_FLOORS = 3;
+const DISPLAY_REPLIES = 2;
 let floors: SifangFloor[] = [];
 let floorIndex: Array<Pick<SifangFloor, 'floor' | 'node' | 'role'>> = [];
 let save: SifangSave | null = null;
@@ -98,7 +99,10 @@ async function readFloors(event: string, messageId: number | undefined, ticket: 
   }
   const line = await host.game.floors();
   if (lifecycle?.aborted || ticket !== revision) return;
-  const recent = line.slice(-DISPLAY_FLOORS);
+  // User messages (including consecutive sends) must not evict the previous
+  // illustrated reply. Keep the small tail plus the two latest AI replies.
+  const replyNodes = new Set(line.filter(item => item.role === 'assistant').slice(-DISPLAY_REPLIES).map(item => item.node));
+  const recent = line.filter((item, index) => index >= line.length - DISPLAY_FLOORS || replyNodes.has(item.node));
   const reuse = !needsFullRefresh && valid && save && sameSave(save, before);
   const loaded = await Promise.all(recent.map(item => {
     const cached = reuse && floors.find(floor => floor.floor === item.floor && floor.node === item.node && floor.role === item.role);

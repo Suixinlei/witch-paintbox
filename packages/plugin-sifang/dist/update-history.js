@@ -1,6 +1,13 @@
 // Release dates use Asia/Shanghai. Historical entries follow the local repository log.
 const updates = [
     {
+        date: '2026-11-24', title: '保留上一条 AI 回复的插图',
+        changes: [
+            '最近两条 AI 回复均保留原位插图，连续发送用户消息后，上一条回复的图片也能继续显示。',
+            '重新打开聊天时同样恢复最近两条 AI 回复的图片，自动生图仍只处理最新一楼。',
+        ],
+    },
+    {
         date: '2026-11-20', title: '生图通道仅保留 NovelAI',
         changes: [
             '移除 GPT、Gemini、Grok 生图通道：界面不再出现通道切换与“更多画笔”，相关配置、连接、画师串与预设一并清理。',

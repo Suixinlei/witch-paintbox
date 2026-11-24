@@ -535,7 +535,7 @@ try {
   await page.waitForFunction(() => fixture.markerCalls.includes('fixture-node'));
   assert.equal(await page.evaluate(() => [...fixture.viewCalls, ...fixture.markerCalls].some(node => node !== 'fixture-node')), false);
 
-  // Slide the display window past a rendered image. Each new floor needs just its own body.
+  // Consecutive user sends must retain both recent AI replies, including after reload.
   await page.evaluate(async () => {
     const { awaitSifangChatRefresh } = await import('/packages/plugin-sifang/dist/sifang-chat.js');
     const latest = fixture.floor;
@@ -554,7 +554,19 @@ try {
       fixture.emit('floor', { floor: floor.floor, node: floor.node });
       await awaitSifangChatRefresh();
       if (fixture.floorReads.some(index => index !== floor.floor)) throw new Error('重读了未变更的旧楼正文');
-      if (i < 3 && !fixture.views[latest.node]?.blob) throw new Error('过早移除了最近三楼中的图片');
+      if (!fixture.views[latest.node]?.blob) throw new Error('连续用户消息移除了最近 AI 回复的图片');
+    }
+    if (!fixture.views['history-1997']) throw new Error('连续用户消息移除了倒数第二条 AI 回复');
+    fixture.emit('save', {});
+    await awaitSifangChatRefresh();
+    const { readSifangFloors } = await import('/packages/plugin-sifang/dist/sifang-chat.js');
+    if (!readSifangFloors().some(f => f.node === 'history-1997')) throw new Error('重新加载后未读取倒数第二条 AI 回复');
+    // Release an old illustration once two newer AI replies replace it.
+    for (let i = 4; i <= 5; i++) {
+      const floor = { ...latest, floor: latest.floor + i, node: 'extra-' + i, role: 'assistant', raw: '新的回复', text: '新的回复' };
+      extra.push(floor); line.push({ floor: floor.floor, node: floor.node, role: floor.role });
+      fixture.emit('floor', { floor: floor.floor, node: floor.node });
+      await awaitSifangChatRefresh();
     }
   });
   await page.waitForFunction(() => !fixture.views['fixture-node']);
