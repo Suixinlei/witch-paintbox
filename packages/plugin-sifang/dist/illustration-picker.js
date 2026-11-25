@@ -478,6 +478,16 @@ export function bindIllustrationPicker(root, signal, processor) {
     panel.addEventListener('close', () => {
         readVersion++;
         loading = false;
+        selection = null;
+        units = [];
+        cart = [];
+        floorChoices.clear();
+        pointOffsets.clear();
+        clearRange();
+        target = undefined;
+        reading.replaceChildren();
+        cartList.replaceChildren();
+        floorPicker?.replaceChildren();
         emitPetEvent({ type: 'ui', action: 'panel-close' });
         if (opener?.isConnected)
             opener.focus({ preventScroll: true });

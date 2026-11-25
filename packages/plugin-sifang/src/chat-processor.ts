@@ -4,7 +4,6 @@ import { applyImageInsertions, createImageInsertionPlan, createSelectedImageInse
 import { normalizeIllustrationItems, type IllustrationItem } from './illustration-selection.js';
 import { MAX_IMAGE_MARKERS, parseImageMarkers } from './image-markers.js';
 import { isImageSizeModeSaving, loadModelSettings } from './model-settings.js';
-import { runConfiguredModel } from './model-service.js';
 import { stageSifangBatch } from './sifang-batch.js';
 import { notifyImageHistorySaved } from './image-history.js';
 import { imagePlanningInput } from './image-planning.js';
@@ -109,6 +108,7 @@ export class ChatProcessor {
         const original = prepared!.plan;
         const items = selection ? normalizeIllustrationItems(original, selection.items) : undefined;
         const plan = items ? selectImageInsertionPoints(original, items.flatMap(item => [...item.pointIds])) : original;
+        const { runConfiguredModel } = await import('./model-service.js');
         const candidate = await runConfiguredModel({
           messages: [{ role: 'user', content: imagePlanningInput(plan, items) }], sourceText: snapshot.text, signal: controller.signal,
         }, text => {

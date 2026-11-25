@@ -1,7 +1,7 @@
 import { imageChatContext } from './chat-host.js';
-import { createImageGallery, type GalleryImage } from './image-gallery.js';
+import type { createImageGallery, GalleryImage } from './image-gallery.js';
 import { notifyImageHistorySaved, deleteImageHistory, historyWasDeleted, type ImageHistoryChange, type ImageHistoryEntry } from './image-history.js';
-import { readServiceHistory, readServiceHistoryImage, requestServiceImage } from './service-client.js';
+import { readServiceHistory, readServiceHistoryImage, readServiceMarkerSaved, requestServiceImage } from './service-client.js';
 import type { MarkerEntry } from './image-marker-history.js';
 import { currentPreferences } from './settings.js';
 import { awaitSifangChatRefresh } from './sifang-chat.js';
@@ -27,28 +27,30 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
   floor(): number;
   /** Where the host's frame sits, read again and again for a while (a picture's flight); target() is the latest. */
   watch(): { target(): FloorTarget | null; stop(): void };
-}, initial?: BatchPicture) {
+}, initial?: BatchPicture, options: { inlineImages?: () => boolean; pet?: boolean } = {}) {
   const controller = new AbortController();
   let request: AbortController | null = null;
   let phase: NativeImageView['state'] = 'idle';
   let status = '正在读取图片历史…';
+  type SavedImage = Pick<ImageHistoryEntry, 'id' | 'createdAt'> & { blob?: Blob };
   let displayed: Pick<ImageHistoryEntry, 'id' | 'createdAt'> | undefined;
   // A failed save has no service copy; keep it downloadable while its frame exists.
   let unsaved: ImageHistoryEntry | undefined;
-  function select(item?: ImageHistoryEntry) {
+  function select(item?: SavedImage) {
     reloading?.abort(); reloading = undefined;
     displayed = item && { id: item.id, createdAt: item.createdAt };
   }
   let reloading: AbortController | undefined;
   let historyAvailable = false;
   let gallery: { view: ReturnType<typeof createImageGallery>; controller: AbortController; items: GalleryImage[] } | undefined;
+  let openingGallery = false;
   let veils = 0;
   let veiled = false;
   const pendingHistory = new Set<ImageHistoryChange[]>();
   const historyKey = entry.historyKey;
   function show(blob?: Blob | null) {
     if (controller.signal.aborted) return;
-    hooks.update({ state: phase, status, blob, veiled });
+    hooks.update({ state: phase, status, blob: options.inlineImages?.() === false ? null : blob, veiled });
   }
   function report(text: string, blob?: Blob | null) { status = text; show(blob); }
   const savedText = '已保存图片 · 点击查看历史';
@@ -79,9 +81,15 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
     for (const item of old.values()) URL.revokeObjectURL(item.url);
   }
   async function openHistory() {
-    if (!displayed || gallery || controller.signal.aborted) return;
+    if (!displayed || gallery || openingGallery || controller.signal.aborted) return;
+    openingGallery = true;
+    let create: typeof createImageGallery;
+    try { create = (await import('./image-gallery.js')).createImageGallery; }
+    catch (error) { if (!controller.signal.aborted) report(error instanceof Error ? error.message : '图片查看器加载失败。'); return; }
+    finally { openingGallery = false; }
+    if (controller.signal.aborted) return;
     const open = new AbortController();
-    const view = createImageGallery(entry.marker.summary, open.signal, {
+    const view = create(entry.marker.summary, open.signal, {
       onSelect(id) {
         const item = gallery?.items.find(item => item.entry.id === id)?.entry;
         select(item);
@@ -100,7 +108,7 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
     view.element.addEventListener('close', closeGallery, { signal: open.signal, once: true });
     if (!historyKey) return;
     try {
-      const entries = await fetchHistory(historyKey, open.signal);
+      const entries = await fetchHistory(historyKey, open.signal, options.inlineImages?.() === false);
       if (gallery !== current) return;
       const local = unsaved;
       if (local && !entries.some(item => item.id === local.id)) entries.push(local);
@@ -147,7 +155,7 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
   let settled = false;
   let settleReady!: () => void;
   const ready = new Promise<void>(resolve => { settleReady = resolve; });
-  function restore(entry: ImageHistoryEntry | undefined, failure?: string): void {
+  function restore(entry: SavedImage | undefined, failure?: string): void {
     if (settled || controller.signal.aborted) return;
     settled = true;
     settleReady();
@@ -158,7 +166,9 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
   }
   async function refreshLatest() {
     try {
-      const entries = historyKey ? await fetchHistory(historyKey, controller.signal, true) : [];
+      const entries: SavedImage[] = !historyKey ? [] : options.inlineImages?.() === false
+        ? [...(await readServiceMarkerSaved([historyKey], controller.signal)).values()].filter((item): item is NonNullable<typeof item> => !!item)
+        : await fetchHistory(historyKey, controller.signal, true);
       if (controller.signal.aborted) return;
       historyAvailable = true;
       if (displayed) return;
@@ -189,7 +199,7 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
     phase = 'queued';
     report('正在加入队列…');
     // Manual clicks report progress and results in the native frame.
-    const pet = autoSignal ? { id: petTaskId(), source: 'auto' as const, floor: hooks.floor() } : undefined;
+    const pet = autoSignal && options.pet !== false ? { id: petTaskId(), source: 'auto' as const, floor: hooks.floor() } : undefined;
     const finishPet = petEnd();
     function endPet(event: Omit<Parameters<typeof finishPet>[0], 'id' | 'type' | 'task' | 'source' | 'floor'>) {
       if (pet) finishPet({ ...pet, type: 'end', task: 'image', ...event });
@@ -271,7 +281,7 @@ export function createSifangImageControl(entry: MarkerEntry, root: ShadowRoot, h
     removeHistory: remove,
     async redisplay() {
       const selected = displayed;
-      if (!selected || controller.signal.aborted) return;
+      if (!selected || controller.signal.aborted || options.inlineImages?.() === false) return;
       if (unsaved?.id === selected.id) { show(unsaved.blob); return; }
       if (!historyKey || reloading) return;
       const load = new AbortController();

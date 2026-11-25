@@ -1991,3 +1991,10 @@ input[type="checkbox"] { flex: 0 0 auto; width: 18px; height: 18px; accent-color
 :host([data-page="worldbooks"]) .service-inline [data-model-settings] > .model-settings:not(.worldbook-library) {
   display: none;
 }
+
+/* Native client: a real toolbar row, no animated shell or desktop overlay. */
+.panel.native-client > .shell { grid-template-rows: auto auto minmax(0, 1fr); }
+.native-client-actions { padding: 12px 20px; flex-wrap: wrap; min-width: 0; }
+.native-client-actions [data-task-status] { flex: 1 1 100%; overflow-wrap: anywhere; }
+.native-client-actions [hidden] { display: none; }
+.native-client-actions .is-error { color: var(--danger); }

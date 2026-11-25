@@ -73,6 +73,8 @@ export interface Settings {
   autoImageDelay: number;
   /** 所有图片入口共用的最大同时请求数，默认逐张生成。 */
   imageConcurrency: number;
+  /** Native frames keep only status by default; pictures are opened on demand. */
+  sifangInlineImages: boolean;
   petLines: boolean;
   petMotion: boolean;
   petScale: number;
@@ -116,7 +118,7 @@ export interface TavernContext {
 
 export function defaultSettings(): Settings {
   return { rememberPage: false, rememberPosition: true, lastPage: 'guide', position: null,
-    imageRetentionDays: 0, autoProcessReplies: false, autoGenerateImages: false, autoImageDelay: 1, imageConcurrency: 1, petLines: true, petMotion: true, petScale: 1, petAway: false, petPlacement: null, paintboxTheme: 'auto', excludedTags: [...DEFAULT_EXCLUDED_TAGS] };
+    imageRetentionDays: 0, autoProcessReplies: false, autoGenerateImages: false, autoImageDelay: 1, imageConcurrency: 1, sifangInlineImages: false, petLines: true, petMotion: true, petScale: 1, petAway: false, petPlacement: null, paintboxTheme: 'auto', excludedTags: [...DEFAULT_EXCLUDED_TAGS] };
 }
 
 export const MAX_AUTO_IMAGE_DELAY = 60;
@@ -172,6 +174,7 @@ function validateSettings(raw: unknown): Settings {
   if (typeof saved.autoGenerateImages === 'boolean') settings.autoGenerateImages = saved.autoGenerateImages;
   settings.autoImageDelay = readAutoImageDelay(saved.autoImageDelay) ?? settings.autoImageDelay;
   settings.imageConcurrency = readImageConcurrency(saved.imageConcurrency) ?? settings.imageConcurrency;
+  if (typeof saved.sifangInlineImages === 'boolean') settings.sifangInlineImages = saved.sifangInlineImages;
   if (typeof saved.petLines === 'boolean') settings.petLines = saved.petLines;
   if (typeof saved.petMotion === 'boolean') settings.petMotion = saved.petMotion;
   settings.petScale = readPetScale(saved.petScale);

@@ -8,6 +8,7 @@ export type ReviewScope = 'current' | 'all';
 
 /** A bounded page of images. Switching pages releases every old object URL. */
 export class ImageReview {
+  constructor(private readonly pageSize = 12) {}
   private container: HTMLElement | null = null;
   private controller: AbortController | null = null;
   private loadRequest?: AbortController;
@@ -153,7 +154,7 @@ export class ImageReview {
           this.cursors = [null];
         }
       }
-      const result = await loadImageHistoryPage(this.all ? this.category : this.scope, this.cursors.at(-1) ?? null, 12, controller.signal);
+      const result = await loadImageHistoryPage(this.all ? this.category : this.scope, this.cursors.at(-1) ?? null, this.pageSize, controller.signal);
       if (version !== this.version || !this.container) return;
       this.items = result.entries.map(entry => ({ entry, url: URL.createObjectURL(entry.blob) }));
       this.next = result.next;
@@ -177,7 +178,7 @@ export class ImageReview {
     const context = imageChatContext();
     const categoryName = this.categories.find(item => item.scope === this.category)?.name;
     const storage = isSifangEnvironment() || isServiceEditor() ? '服务保存' : '本机保存';
-    container.querySelector('[data-review-context]')!.textContent = `${this.all ? categoryName ?? '全部角色卡与未归属图片' : context?.name ?? '当前角色卡'} · ${storage} · 每页最多 12 张`;
+    container.querySelector('[data-review-context]')!.textContent = `${this.all ? categoryName ?? '全部角色卡与未归属图片' : context?.name ?? '当前角色卡'} · ${storage} · 每页最多 ${this.pageSize} 张`;
     this.renderCategories();
     const grid = container.querySelector<HTMLElement>('[data-review-grid]')!;
     grid.replaceChildren();

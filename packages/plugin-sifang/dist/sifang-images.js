@@ -4,17 +4,18 @@ import { markerEntries } from './image-marker-history.js';
 import { automaticImages } from './automatic-images.js';
 import { onImageHistoryChanged } from './image-history.js';
 import { createSifangImageControl } from './sifang-image-control.js';
-import { readServiceMarkerLatest } from './service-client.js';
+import { readServiceMarkerLatest, readServiceMarkerSaved } from './service-client.js';
 import { sifangHost } from './sifang-host.js';
 import { hasSifangFloor, readSifangFloor, readSifangFloors, isSifangFloorPending } from './sifang-chat.js';
 import { clearSifangBatch, sifangBatchPicture } from './sifang-batch.js';
 import { nativeTarget } from './pet-targets.js';
 import { hostNoticeDue, resetHostNotices } from './host-notice.js';
 /** Render through the host's real paragraph blocks, while keeping the existing plugin image lifecycle. */
-export function bindSifangImages(root, signal) {
+export function bindSifangImages(root, signal, options = {}) {
     const host = sifangHost;
     if (!host || signal.aborted)
         return;
+    let inlineImages = options.inlineImages?.() !== false;
     const controls = new Map();
     const registered = new Map();
     // Floors the host refused (gone, switched away, or still being rewritten). A refusal
@@ -166,7 +167,8 @@ export function bindSifangImages(root, signal) {
                 for (const item of items)
                     waiting.delete(item);
                 try {
-                    const entries = await readServiceMarkerLatest([...new Set(items.map(item => item.entry.historyKey))], signal);
+                    const keys = [...new Set(items.map(item => item.entry.historyKey))];
+                    const entries = inlineImages ? await readServiceMarkerLatest(keys, signal) : await readServiceMarkerSaved(keys, signal);
                     for (const item of items)
                         item.control.restore(entries.get(item.entry.historyKey));
                 }
@@ -230,7 +232,7 @@ export function bindSifangImages(root, signal) {
                             },
                             floor: () => created.message.messageId,
                             watch: () => watchFrame(created),
-                        }, batch?.error ? batch : undefined);
+                        }, batch?.error ? batch : undefined, options);
                         created.needsPicture = !batch?.error;
                         controls.set(entry.key, created);
                         item = created;
@@ -385,7 +387,21 @@ export function bindSifangImages(root, signal) {
         schedule();
     }, { signal });
     window.addEventListener('witch-paintbox:model-settings-changed', schedule, { signal });
-    window.addEventListener('witch-paintbox:preferences-changed', schedule, { signal });
+    window.addEventListener('witch-paintbox:preferences-changed', () => {
+        const next = options.inlineImages?.() !== false;
+        if (next !== inlineImages) {
+            inlineImages = next;
+            for (const item of controls.values()) {
+                item.registered = false;
+                item.control.dispose();
+            }
+            controls.clear();
+            waiting.clear();
+            for (const item of registered.values())
+                item.signature = '';
+        }
+        schedule();
+    }, { signal });
     window.addEventListener('storage', schedule, { signal });
     signal.addEventListener('abort', () => {
         ++version;

@@ -4,7 +4,7 @@ import { markerEntries, type MarkerEntry, type AssistantImageMessage } from './i
 import { automaticImages } from './automatic-images.js';
 import { onImageHistoryChanged } from './image-history.js';
 import { createSifangImageControl, type NativeImageView } from './sifang-image-control.js';
-import { readServiceMarkerLatest } from './service-client.js';
+import { readServiceMarkerLatest, readServiceMarkerSaved } from './service-client.js';
 import { sifangHost, type SifangFloor } from './sifang-host.js';
 import { hasSifangFloor, readSifangFloor, readSifangFloors, isSifangFloorPending } from './sifang-chat.js';
 import { clearSifangBatch, sifangBatchPicture } from './sifang-batch.js';
@@ -27,9 +27,10 @@ interface NativeControl {
 }
 
 /** Render through the host's real paragraph blocks, while keeping the existing plugin image lifecycle. */
-export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
+export function bindSifangImages(root: ShadowRoot, signal: AbortSignal, options: { inlineImages?: () => boolean; pet?: boolean } = {}): void {
   const host = sifangHost;
   if (!host || signal.aborted) return;
+  let inlineImages = options.inlineImages?.() !== false;
   const controls = new Map<string, NativeControl>();
   const registered = new Map<string, { floor: SifangFloor; signature: string }>();
   // Floors the host refused (gone, switched away, or still being rewritten). A refusal
@@ -160,7 +161,8 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
         const items = [...waiting].slice(0, 3);
         for (const item of items) waiting.delete(item);
         try {
-          const entries = await readServiceMarkerLatest([...new Set(items.map(item => item.entry.historyKey!))], signal);
+          const keys = [...new Set(items.map(item => item.entry.historyKey!))];
+          const entries = inlineImages ? await readServiceMarkerLatest(keys, signal) : await readServiceMarkerSaved(keys, signal);
           for (const item of items) item.control.restore(entries.get(item.entry.historyKey!));
         } catch (error) {
           if (signal.aborted) return;
@@ -207,7 +209,7 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
               },
               floor: () => created.message.messageId,
               watch: () => watchFrame(created),
-            }, batch?.error ? batch : undefined);
+            }, batch?.error ? batch : undefined, options);
             created.needsPicture = !batch?.error;
             controls.set(entry.key, created);
             item = created;
@@ -322,7 +324,16 @@ export function bindSifangImages(root: ShadowRoot, signal: AbortSignal): void {
     schedule();
   }, { signal });
   window.addEventListener('witch-paintbox:model-settings-changed', schedule, { signal });
-  window.addEventListener('witch-paintbox:preferences-changed', schedule, { signal });
+  window.addEventListener('witch-paintbox:preferences-changed', () => {
+    const next = options.inlineImages?.() !== false;
+    if (next !== inlineImages) {
+      inlineImages = next;
+      for (const item of controls.values()) { item.registered = false; item.control.dispose(); }
+      controls.clear(); waiting.clear();
+      for (const item of registered.values()) item.signature = '';
+    }
+    schedule();
+  }, { signal });
   window.addEventListener('storage', schedule, { signal });
   signal.addEventListener('abort', () => {
     ++version; offImage(); offChat(); offHistory(); automatic.dispose();

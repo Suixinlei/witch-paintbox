@@ -1,12 +1,11 @@
 import { imageChatContext } from './chat-host.js';
-import { createImageGallery } from './image-gallery.js';
 import { notifyImageHistorySaved, deleteImageHistory, historyWasDeleted } from './image-history.js';
-import { readServiceHistory, readServiceHistoryImage, requestServiceImage } from './service-client.js';
+import { readServiceHistory, readServiceHistoryImage, readServiceMarkerSaved, requestServiceImage } from './service-client.js';
 import { currentPreferences } from './settings.js';
 import { awaitSifangChatRefresh } from './sifang-chat.js';
 import { emitPetEvent, petEnd, petFault, petTaskId } from './pet-events.js';
 /** The native view is transient. History, gallery and requests keep the plugin's existing storage and queue. */
-export function createSifangImageControl(entry, root, hooks, initial) {
+export function createSifangImageControl(entry, root, hooks, initial, options = {}) {
     const controller = new AbortController();
     let request = null;
     let phase = 'idle';
@@ -22,6 +21,7 @@ export function createSifangImageControl(entry, root, hooks, initial) {
     let reloading;
     let historyAvailable = false;
     let gallery;
+    let openingGallery = false;
     let veils = 0;
     let veiled = false;
     const pendingHistory = new Set();
@@ -29,7 +29,7 @@ export function createSifangImageControl(entry, root, hooks, initial) {
     function show(blob) {
         if (controller.signal.aborted)
             return;
-        hooks.update({ state: phase, status, blob, veiled });
+        hooks.update({ state: phase, status, blob: options.inlineImages?.() === false ? null : blob, veiled });
     }
     function report(text, blob) { status = text; show(blob); }
     const savedText = '已保存图片 · 点击查看历史';
@@ -65,10 +65,25 @@ export function createSifangImageControl(entry, root, hooks, initial) {
             URL.revokeObjectURL(item.url);
     }
     async function openHistory() {
-        if (!displayed || gallery || controller.signal.aborted)
+        if (!displayed || gallery || openingGallery || controller.signal.aborted)
+            return;
+        openingGallery = true;
+        let create;
+        try {
+            create = (await import('./image-gallery.js')).createImageGallery;
+        }
+        catch (error) {
+            if (!controller.signal.aborted)
+                report(error instanceof Error ? error.message : '图片查看器加载失败。');
+            return;
+        }
+        finally {
+            openingGallery = false;
+        }
+        if (controller.signal.aborted)
             return;
         const open = new AbortController();
-        const view = createImageGallery(entry.marker.summary, open.signal, {
+        const view = create(entry.marker.summary, open.signal, {
             onSelect(id) {
                 const item = gallery?.items.find(item => item.entry.id === id)?.entry;
                 select(item);
@@ -91,7 +106,7 @@ export function createSifangImageControl(entry, root, hooks, initial) {
         if (!historyKey)
             return;
         try {
-            const entries = await fetchHistory(historyKey, open.signal);
+            const entries = await fetchHistory(historyKey, open.signal, options.inlineImages?.() === false);
             if (gallery !== current)
                 return;
             const local = unsaved;
@@ -163,7 +178,9 @@ export function createSifangImageControl(entry, root, hooks, initial) {
     }
     async function refreshLatest() {
         try {
-            const entries = historyKey ? await fetchHistory(historyKey, controller.signal, true) : [];
+            const entries = !historyKey ? [] : options.inlineImages?.() === false
+                ? [...(await readServiceMarkerSaved([historyKey], controller.signal)).values()].filter((item) => !!item)
+                : await fetchHistory(historyKey, controller.signal, true);
             if (controller.signal.aborted)
                 return;
             historyAvailable = true;
@@ -201,7 +218,7 @@ export function createSifangImageControl(entry, root, hooks, initial) {
         phase = 'queued';
         report('正在加入队列…');
         // Manual clicks report progress and results in the native frame.
-        const pet = autoSignal ? { id: petTaskId(), source: 'auto', floor: hooks.floor() } : undefined;
+        const pet = autoSignal && options.pet !== false ? { id: petTaskId(), source: 'auto', floor: hooks.floor() } : undefined;
         const finishPet = petEnd();
         function endPet(event) {
             if (pet)
@@ -299,7 +316,7 @@ export function createSifangImageControl(entry, root, hooks, initial) {
         removeHistory: remove,
         async redisplay() {
             const selected = displayed;
-            if (!selected || controller.signal.aborted)
+            if (!selected || controller.signal.aborted || options.inlineImages?.() === false)
                 return;
             if (unsaved?.id === selected.id) {
                 show(unsaved.blob);

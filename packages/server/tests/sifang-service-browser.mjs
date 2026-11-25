@@ -259,6 +259,13 @@ try {
   await page.goto(origin(web));
   await page.getByRole('button', { name: '打开魔女画匣', exact: true }).click();
   await page.locator('.sidebar [data-page="preferences"]').click();
+  assert.equal(await page.locator('.launcher, .launcher-menu, .witch-pet').count(), 0);
+  assert.equal(await page.getByLabel('正文内显示图片').isChecked(), false);
+  const loaded = await page.evaluate(() => performance.getEntriesByType('resource').map(item => item.name));
+  assert.equal(loaded.some(url => /\/(pet\/|launcher|image-config|model-config|anchor-config|image-review|illustration-picker)/.test(new URL(url).pathname)), false);
+  // Explicit opt-in retains the old inline-picture behavior for the workflow assertions below.
+  await page.getByLabel('正文内显示图片').check();
+
   await page.getByLabel('服务地址').fill(service);
   await page.getByLabel('访问令牌').fill(token);
   await page.getByRole('button', { name: '测试并保存' }).click();
@@ -292,6 +299,7 @@ try {
   assert.equal(await page.locator('.wp-gallery').count(), 0);
 
   await page.getByRole('button', { name: '关闭魔女画匣', exact: true }).click();
+  await page.locator('#image-plugin-panel').waitFor({ state: 'detached' });
   await page.evaluate(() => {
     const { floor, markers } = fixture;
     fixture.emit('image-marker', { action: 'open', saveId: floor.saveId, node: floor.node, marker: markers[0], raw: floor.raw });
@@ -399,7 +407,7 @@ try {
   assert.deepEqual(stores, []);
 
   await page.getByRole('button', { name: '关闭魔女画匣', exact: true }).click();
-  await page.locator('.launcher').click();
+  await page.getByRole('button', { name: '打开魔女画匣', exact: true }).click();
   await page.locator('[data-select]').click();
   const picker = page.getByRole('dialog', { name: '指定插图' });
   const floorChoice = picker.getByLabel('配图楼层');
@@ -508,6 +516,26 @@ try {
   // Once the rewrite is over the floor registers again, without another event.
   await page.waitForFunction(before => fixture.markerCalls.filter(node => node === 'fixture-node').length > before,
     rewrite.registeredBefore, { timeout: 15_000 });
+  await picker.getByRole('button', { name: '关闭指定插图' }).click();
+  await picker.waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: '打开魔女画匣', exact: true }).click();
+  const metadata = page.waitForResponse(response => response.url() === service + '/v1/history/marker'
+    && response.request().method() === 'POST' && response.request().postDataJSON().embed === false);
+  await page.getByLabel('正文内显示图片').uncheck();
+  const metadataResponse = await metadata;
+  assert.ok(metadataResponse.ok());
+  const metadataPacket = await unpack(await (await fetch(metadataResponse.url(), { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: metadataResponse.request().postData() })).blob());
+  assert.equal(metadataPacket.blobs.length, 0);
+  await page.waitForFunction(() => fixture.view?.blob === null);
+  await page.getByRole('button', { name: '生图回顾', exact: true }).click();
+  await page.locator('[data-review-grid] img').waitFor();
+  assert.equal(await page.locator('[data-review-grid] img').count(), 1);
+  await page.getByRole('button', { name: '服务连接', exact: true }).click();
+  await page.getByLabel('正文内显示图片').check();
+  await page.waitForFunction(() => fixture.view?.blob instanceof Blob);
+  await page.getByRole('button', { name: '关闭魔女画匣', exact: true }).click();
+  await page.locator('#image-plugin-panel').waitFor({ state: 'detached' });
+  assert.equal(await page.locator('.illustration-picker, .wp-gallery').count(), 0);
   assert.deepEqual(errors, []);
 
   // A normal edit of the latest floor must not fetch the entire directory or notify its neighbours.

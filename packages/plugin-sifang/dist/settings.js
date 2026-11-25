@@ -80,7 +80,7 @@ export function readExcludedTags(value) {
 export const isPaintboxTheme = (value) => value === 'auto' || value === 'day' || value === 'night';
 export function defaultSettings() {
     return { rememberPage: false, rememberPosition: true, lastPage: 'guide', position: null,
-        imageRetentionDays: 0, autoProcessReplies: false, autoGenerateImages: false, autoImageDelay: 1, imageConcurrency: 1, petLines: true, petMotion: true, petScale: 1, petAway: false, petPlacement: null, paintboxTheme: 'auto', excludedTags: [...DEFAULT_EXCLUDED_TAGS] };
+        imageRetentionDays: 0, autoProcessReplies: false, autoGenerateImages: false, autoImageDelay: 1, imageConcurrency: 1, sifangInlineImages: false, petLines: true, petMotion: true, petScale: 1, petAway: false, petPlacement: null, paintboxTheme: 'auto', excludedTags: [...DEFAULT_EXCLUDED_TAGS] };
 }
 export const MAX_AUTO_IMAGE_DELAY = 60;
 export const MAX_IMAGE_CONCURRENCY = 4;
@@ -138,6 +138,8 @@ function validateSettings(raw) {
         settings.autoGenerateImages = saved.autoGenerateImages;
     settings.autoImageDelay = readAutoImageDelay(saved.autoImageDelay) ?? settings.autoImageDelay;
     settings.imageConcurrency = readImageConcurrency(saved.imageConcurrency) ?? settings.imageConcurrency;
+    if (typeof saved.sifangInlineImages === 'boolean')
+        settings.sifangInlineImages = saved.sifangInlineImages;
     if (typeof saved.petLines === 'boolean')
         settings.petLines = saved.petLines;
     if (typeof saved.petMotion === 'boolean')
