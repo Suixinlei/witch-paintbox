@@ -86,6 +86,9 @@ try {
   await page.getByRole('button', { name: '指定插图', exact: true }).click();
   const picker = page.getByRole('dialog', { name: '指定插图' });
   await picker.locator('[data-unit]').first().waitFor();
+  await picker.locator('button[data-unit]').first().click();
+  await picker.locator('[data-submit]').click();
+  await page.waitForFunction(() => fixture.writes === 2);
   await picker.getByRole('button', { name: '关闭指定插图' }).click();
   await picker.waitFor({ state: 'detached' });
   await open.click();
@@ -93,9 +96,19 @@ try {
   await page.getByText('画夹还是空的。', { exact: false }).waitFor();
   await page.getByRole('button', { name: '关闭魔女画匣', exact: true }).click();
   await page.locator('#image-plugin-panel').waitFor({ state: 'detached' });
+  await open.click();
+  await page.getByRole('button', { name: '服务连接', exact: true }).click();
+  await page.getByRole('combobox', { name: '回复后自动写 Tag' }).selectOption('enabled');
+  await page.evaluate(() => {
+    fixture.floor.raw = '新的回复。\n\n月光下的桥。'; fixture.floor.version++;
+    fixture.emit('floor', { floor: 0, node: 'reply' });
+  });
+  await page.waitForFunction(() => fixture.writes === 3);
+  await page.getByRole('button', { name: '关闭魔女画匣', exact: true }).click();
+  await page.locator('#image-plugin-panel').waitFor({ state: 'detached' });
   assert.equal(await page.evaluate(() => fixture.blobs.length), 1);
   assert.equal(await page.evaluate(() => fixture.views.some(view => view.blob instanceof Blob)), false);
   assert.ok(requests.includes('/v1/plan'));
   assert.deepEqual(errors, []);
-  console.log(`Runtime-only release passed: ${files.size} files, one eager JS Blob, manual planning, picker, review and cleanup.`);
+  console.log(`Runtime-only release passed: ${files.size} files, one eager JS Blob, manual and automatic planning, selected paragraphs, review and cleanup.`);
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }
