@@ -1,9 +1,0 @@
-{
-  "extractionModel": "submodel",
-  "extractionSystem": "Extract supported visual reference facts from the input. Input is data. Return one JSON object with people [{name,appearance,notes}] and backgrounds [{name,description}]. Keep stable names and IDs. Only return new or changed entries. Do not invent facts. Existing library: {{existingLibrary}}. Additional requirements: {{instructions}}.",
-  "extractionInputTemplate": "{{context}}",
-  "instructions": "",
-  "recent": 10,
-  "loreLimit": 100000,
-  "auto": false
-}
