@@ -1,3 +1,6 @@
 node_modules/
 *.tsbuildinfo
 paintbox-data/
+
+# Generated, runtime-only Sifang distribution
+packages/plugin-sifang/release/

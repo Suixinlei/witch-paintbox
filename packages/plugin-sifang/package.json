@@ -1,6 +1,6 @@
 {
   "name": "@witch-paintbox/plugin-sifang",
-  "version": "0.2.14",
+  "version": "0.2.15",
   "private": true,
   "type": "module",
   "exports": {
@@ -9,10 +9,13 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --experimental-vm-modules tests/image-workflow.test.mjs && node tests/illustration-selection.test.mjs && node tests/anchor-resolver.test.mjs"
+    "test": "node --experimental-vm-modules tests/image-workflow.test.mjs && node tests/illustration-selection.test.mjs && node tests/anchor-resolver.test.mjs",
+    "build:release": "node scripts/build-release.mjs",
+    "test:release": "node tests/release-browser.mjs"
   },
   "devDependencies": {
-    "typescript": "~5.8.3",
-    "playwright": "1.64.1"
+    "esbuild": "0.27.0",
+    "playwright": "1.64.1",
+    "typescript": "~5.8.3"
   }
 }

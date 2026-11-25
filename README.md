@@ -29,7 +29,7 @@ pnpm test
 
 ## 更新插件
 
-- **四方世界**沿用仓库根目录的 [`manifest.json`](manifest.json)。发布时提交 `packages/plugin-sifang/dist/`，宿主会通过根清单加载该目录的构建产物。
+- **四方世界**：开发源码留在 `main`；`sifang-standalone-service` 仅发布运行包。运行 `pnpm --filter @witch-paintbox/plugin-sifang build:release` 构建 5 文件清单，再运行 `node packages/plugin-sifang/scripts/prepare-release.mjs` 准备快进发布提交。不要把开发目录直接推入发布分支；四方会下载并预载仓库中符合规则的所有文件。
 - **Risu** 构建产物位于 `packages/plugin-risu/dist/plugin.js`。运行 `pnpm --filter @witch-paintbox/plugin-risu deploy` 可复制到与本仓库同级的 Risu 工作目录。更新本地已安装插件可使用 [Risu 更新脚本](packages/plugin-risu/skills/risu-plugin-update/SKILL.md)。
 
 Windows 本机的服务部署、四方发布和 Risu 应用流程见[项目级三端运维 Skill](.agents/skills/witch-paintbox-operations/SKILL.md)。
