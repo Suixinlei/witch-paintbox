@@ -1,6 +1,7 @@
 import { decodeInBackground } from './background-client.js';
 import { ImageResponseError, readImageResponse, requireImageSupport } from './image-response.js';
 import { queueImageGeneration } from './image-queue.js';
+import { modelCharacterPosition, validCharacterPosition } from './character-position.js';
 // Official model catalog: https://docs.novelai.net/en/image/models/
 export const NAI_MODELS = [
     { value: 'nai-diffusion-5-full', label: 'NAI Diffusion V5 Full' },
@@ -112,7 +113,7 @@ function abortError() {
     error.name = 'AbortError';
     return error;
 }
-function snapshotCharacters(characters, model) {
+export function snapshotCharacters(characters, model) {
     if (!Array.isArray(characters))
         fail('角色分栏格式无效，请使用角色提示词列表。', 'setup');
     if (characters.length && model === 'nai-diffusion-3')
@@ -120,13 +121,18 @@ function snapshotCharacters(characters, model) {
     const limit = model.startsWith('nai-diffusion-5') ? 22 : 6;
     if (characters.length > limit)
         fail(`当前模型最多支持 ${limit} 个角色分栏。`, 'setup');
+    const positioned = characters.some(character => character?.center !== undefined);
     return Array.from(characters, (character, index) => {
         if (!character || typeof character !== 'object' || Array.isArray(character)
             || typeof character.positive !== 'string' || !character.positive.trim()
             || typeof character.negative !== 'string') {
             fail(`第 ${index + 1} 个角色分栏无效：正面提示词不能为空，负面提示词须为文本。`, 'setup');
         }
-        return { positive: character.positive, negative: character.negative };
+        if (positioned && !validCharacterPosition(character.center)) {
+            fail(`第 ${index + 1} 个角色缺少有效位置：使用位置控制时，每个角色都须提供 0～1 的 x/y 坐标。`, 'setup');
+        }
+        return { positive: character.positive, negative: character.negative,
+            ...(character.center ? { center: modelCharacterPosition(character.center, model) } : {}) };
     });
 }
 /** Freeze each click before joining the shared queue; never repeat a billable request. */
@@ -163,23 +169,23 @@ export async function generateImage(connection, params, positive, negative, sign
             caption: {
                 base_caption: positive,
                 char_captions: characterSnapshot.map(character => ({
-                    char_caption: character.positive, centers: [{ x: 0.5, y: 0.5 }],
+                    char_caption: character.positive, centers: [character.center ?? { x: 0.5, y: 0.5 }],
                 })),
             },
-            use_coords: false, use_order: true,
+            use_coords: characterSnapshot.some(character => character.center !== undefined), use_order: true,
         };
         parameters.v4_negative_prompt = {
             caption: {
                 base_caption: negative,
                 char_captions: characterSnapshot.map(character => ({
-                    char_caption: character.negative, centers: [{ x: 0.5, y: 0.5 }],
+                    char_caption: character.negative, centers: [character.center ?? { x: 0.5, y: 0.5 }],
                 })),
             },
             legacy_uc: false,
         };
-        parameters.use_coords = false;
+        parameters.use_coords = characterSnapshot.some(character => character.center !== undefined);
         parameters.characterPrompts = characterSnapshot.map(character => ({
-            prompt: character.positive, uc: character.negative, center: { x: 0.5, y: 0.5 },
+            prompt: character.positive, uc: character.negative, center: character.center ?? { x: 0.5, y: 0.5 },
         }));
         parameters.reference_image_multiple = [];
         parameters.reference_information_extracted_multiple = [];

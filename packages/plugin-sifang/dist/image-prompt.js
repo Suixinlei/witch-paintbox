@@ -1,6 +1,7 @@
 import { loadAnchors } from './anchor-store.js';
 import { resolveAnchorPromptFields } from './anchor-resolver.js';
 import { loadSharedOutfits } from './shared-outfit-store.js';
+import { readCharacterPosition } from './character-position.js';
 /** Delimiters belong to the source protocol, never to tags expanded from storage. */
 function separators(source) {
     const found = [];
@@ -105,8 +106,10 @@ export async function prepareImagePrompt(scene, globalNegative, artistPositive =
         positive: [artistPositive, expanded.positive].filter(text => text.trim()).join(', '),
         negative: mergeNegative(globalNegative, expanded.negative),
         characters: parsed.characters.map(character => {
-            const expanded = expand(character.positive);
-            return { positive: expanded.positive, negative: mergeNegative(character.negative, expanded.negative) };
+            const { positive, center } = readCharacterPosition(character.positive);
+            const expanded = expand(positive);
+            return { positive: expanded.positive, negative: mergeNegative(character.negative, expanded.negative),
+                ...(center ? { center } : {}) };
         }),
     };
 }

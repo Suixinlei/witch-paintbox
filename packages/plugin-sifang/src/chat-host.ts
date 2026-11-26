@@ -90,8 +90,8 @@ async function nativeState() {
   // Import the already-loaded native modules to read their live generation flags.
   // These flags cover generation that started before this extension was opened.
   nativePromise ??= Promise.all([
-    import(new URL('/script.js', location.href).href),
-    import(new URL('/scripts/group-chats.js', location.href).href),
+    import(/* @vite-ignore */ new URL('/script.js', location.href).href),
+    import(/* @vite-ignore */ new URL('/scripts/group-chats.js', location.href).href),
   ]).then(([main, group]) => ({ main: main as NativeState, group: group as { is_group_generating?: boolean } }))
     .catch(() => { nativePromise = undefined; throw new ChatHostError('无法核对酒馆生成状态，请稍后重试。'); });
   return nativePromise;

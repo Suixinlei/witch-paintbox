@@ -39,13 +39,14 @@ export async function generatePreparedImage(
   prompt: PreparedImagePrompt,
   signal: AbortSignal,
   onProgress?: (progress: ImageGenerationProgress) => void,
+  size?: ImageSize,
 ): Promise<ConfiguredImageResult> {
   signal.throwIfAborted();
   if ((isSifangEnvironment() || isServiceEditor())) {
     const { requestServiceImage } = await import('./service-client.js');
-    return requestServiceImage({ input: { prompt } }, signal, onProgress);
+    return requestServiceImage({ input: { prompt, ...(size ? { size } : {}) } }, signal, onProgress);
   }
-  return drawNovelAI(settings, prompt, signal, onProgress);
+  return drawNovelAI(size ? { ...settings, parameters: { ...settings.parameters, ...imageSizeDimensions(size) } } : settings, prompt, signal, onProgress);
 }
 
 /** Freeze each click before asynchronous anchor loading and the shared request queue. */

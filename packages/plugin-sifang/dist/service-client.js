@@ -2,6 +2,9 @@ import { withFault } from './pet-events.js';
 import { packet, unpack, PACKET_TYPE, SERVICE_VERSION, } from './service-protocol.js';
 const storageKey = 'witch-paintbox.standalone-service.v1';
 let editorConnection;
+let editorFetch;
+/** Hosts with a network sandbox can supply their native request bridge. */
+export function setEditorFetch(transport) { editorFetch = transport; }
 export function setEditorConnection(connection) { editorConnection = serviceConnection(connection); }
 export function isServiceEditor() { return editorConnection !== undefined; }
 function serviceConnection(value) {
@@ -53,7 +56,7 @@ export async function sendService(path, body, signal, connection = loadServiceCo
     const combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
     let response;
     try {
-        response = await fetch(`${connection.url}/v1/${path}`, {
+        response = await (editorFetch ?? fetch)(`${connection.url}/v1/${path}`, {
             method: body === null ? 'GET' : 'POST', signal: combined, credentials: 'omit',
             cache: 'no-store', redirect: 'error', referrerPolicy: 'no-referrer',
             headers: { Authorization: `Bearer ${connection.token}`,

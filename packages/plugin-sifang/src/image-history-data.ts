@@ -24,6 +24,8 @@ export interface ImageHistoryData {
   characters?: CharacterPrompt[];
   /** Original scene tags before anchor expansion and artist additions. Older entries omit this. */
   scenePrompt?: string;
+  /** Expanded positive scene and character captions, before artist tags are added. */
+  copyPrompt?: string;
   scope?: string;
   title?: string;
   sourceName?: string;

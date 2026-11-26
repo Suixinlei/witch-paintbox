@@ -1,4 +1,5 @@
 import type { CharacterPrompt } from './image-prompt.js';
+import { validCharacterPosition } from './character-position.js';
 import { historyScope, historySourceName, type ImageHistoryEntry, type ImageHistoryData } from './image-history-data.js';
 
 const databaseName = 'witch-paintbox-image-history';
@@ -195,10 +196,12 @@ export function snapshotImageHistory(value: unknown): ImageHistoryEntry {
     characters = [];
     for (const character of entry.characters) {
       if (!character || typeof character.positive !== 'string' || !character.positive.trim()
-        || typeof character.negative !== 'string') {
+        || typeof character.negative !== 'string'
+        || character.center !== undefined && !validCharacterPosition(character.center)) {
         throw new Error('图片历史的角色分栏格式无效，原有记录未修改。');
       }
-      characters.push({ positive: character.positive, negative: character.negative });
+      characters.push({ positive: character.positive, negative: character.negative,
+        ...(character.center ? { center: { ...character.center } } : {}) });
     }
   }
   const common: ImageHistoryData = {
@@ -206,6 +209,7 @@ export function snapshotImageHistory(value: unknown): ImageHistoryEntry {
     positive: entry.positive, negative: entry.negative,
     ...(characters === undefined ? {} : { characters }),
     ...(entry.scenePrompt === undefined ? {} : { scenePrompt: entry.scenePrompt }),
+    ...(typeof entry.copyPrompt === 'string' && entry.copyPrompt.length <= 1_048_576 ? { copyPrompt: entry.copyPrompt } : {}),
     scope: historyScope(entry.markerKey),
     ...(typeof entry.title === 'string' ? { title: entry.title.slice(0, 400) } : {}),
     ...(typeof entry.sourceName === 'string' ? { sourceName: entry.sourceName.slice(0, 200) } : {}),

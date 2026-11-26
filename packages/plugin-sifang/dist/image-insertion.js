@@ -164,10 +164,17 @@ export function selectImageInsertionPoints(plan, pointIds) {
         throw withFault(new Error('所选插图位置已失效，请重新打开指定插图。'), 'format');
     return annotateInsertionPoints(plan.original, points);
 }
-export function applyImageInsertions(plan, response, requiredItems) {
+export function applyImageInsertions(plan, response, requiredItems, maxImages) {
     if (typeof response !== 'string' || response.length > MAX_MARKER_TEXT_LENGTH)
         throw withFault(new Error('AI 返回内容过长或格式无效。'), 'format');
     let source = response.trim();
+    // Reasoning blocks are metadata, not part of the illustration JSON.
+    while (/^<(think|thoughts|thinking|analysis)\b/i.test(source)) {
+        const thought = /^<(think|thoughts|thinking|analysis)\b[^>]*>[\s\S]*?<\/\1\s*>/i.exec(source);
+        if (!thought)
+            break;
+        source = source.slice(thought[0].length).trimStart();
+    }
     const fence = /^```(?:json)?[ \t]*(?:\r\n|\r|\n)([\s\S]*?)(?:\r\n|\r|\n)```$/i.exec(source);
     if (fence)
         source = fence[1];
@@ -179,13 +186,14 @@ export function applyImageInsertions(plan, response, requiredItems) {
         throw withFault(new Error('AI 未返回有效的配图 JSON，原文未修改。'), 'format');
     }
     if (decoded && typeof decoded === 'object' && !Array.isArray(decoded)
-        && Object.keys(decoded).length === 1 && Object.hasOwn(decoded, 'images'))
+        && Object.hasOwn(decoded, 'images'))
         decoded = decoded.images;
     if (!Array.isArray(decoded))
-        throw withFault(new Error('配图 JSON 须为数组，或仅含 images 数组的对象。原文未修改。'), 'format');
+        throw withFault(new Error('配图 JSON 须为数组，或含 images 数组的对象。原文未修改。'), 'format');
+    const warnings = [];
     const existing = parseImageMarkers(plan.original);
-    if (decoded.length + existing.length > MAX_IMAGE_MARKERS)
-        throw withFault(new Error('图片标记总数不能超过 64 处。'), 'format');
+    const limit = Math.min(maxImages ?? MAX_IMAGE_MARKERS, MAX_IMAGE_MARKERS - existing.length);
+    let retained = 0;
     const positions = new Map(plan.points.map(point => [point.id, point.offset]));
     const groups = new Map();
     const itemByPoint = new Map();
@@ -199,39 +207,53 @@ export function applyImageInsertions(plan, response, requiredItems) {
         }
     });
     const returnedItems = new Set();
-    const warnings = [];
-    for (const row of decoded) {
+    for (const [index, row] of decoded.entries()) {
+        if (retained >= limit) {
+            warnings.push(`AI 返回的配图超过本次容量，已保留前 ${limit} 张有效配图。`);
+            break;
+        }
         if (!row || typeof row !== 'object' || Array.isArray(row)
-            || Object.keys(row).some(key => !['at', 'summary', 'prompt', 'size'].includes(key)) || typeof row.at !== 'string'
-            || typeof row.summary !== 'string' || typeof row.prompt !== 'string') {
-            throw withFault(new Error('每处配图需包含 at、summary、prompt，可选 size；不能包含其他字段。'), 'format');
+            || typeof row.at !== 'string' || typeof row.prompt !== 'string') {
+            warnings.push(`第 ${index + 1} 项缺少插入位置或提示词，已跳过。`);
+            continue;
         }
-        const offset = positions.get(row.at);
-        const itemIndex = itemByPoint.get(row.at);
-        if (offset === undefined || (requiredItems && itemIndex === undefined))
-            throw withFault(new Error(requiredItems
-                ? 'AI 返回了未选择的插入点，原文未修改。' : 'AI 返回了不存在的插入点，原文未修改。'), 'format');
+        const at = row.at.trim();
+        const offset = positions.get(at);
+        const itemIndex = itemByPoint.get(at);
+        if (offset === undefined || (requiredItems && itemIndex === undefined)) {
+            warnings.push(`第 ${index + 1} 项的插入点无效或未选择，已跳过。`);
+            continue;
+        }
         if (itemIndex !== undefined && returnedItems.has(itemIndex)) {
-            throw withFault(new Error(`AI 为配图 ${itemIndex + 1} 返回了多条数据，每项只能生成一张，原文未修改。`), 'format');
+            warnings.push(`AI 为配图 ${itemIndex + 1} 返回了多条数据，已保留第一张有效配图。`);
+            continue;
         }
-        if (!row.summary.trim() || !row.prompt.trim() || /[\[\]<>\r\n]/.test(row.summary)
-            || /<\s*\/?\s*img\b/i.test(row.prompt)) {
-            throw withFault(new Error('配图概括或提示词无效，不能为空或嵌入图片标记。'), 'format');
+        if (!row.prompt.trim() || /<\s*\/?\s*img\b/i.test(row.prompt)) {
+            warnings.push(`第 ${index + 1} 项的提示词为空或嵌入图片标记，已跳过。`);
+            continue;
         }
+        const summary = (typeof row.summary === 'string' ? row.summary.replace(/[\[\]<>\r\n]+/g, ' ').trim() : '') || `配图 ${index + 1}`;
         const size = parseImageSize(row.size);
         if (Object.hasOwn(row, 'size') && !size) {
             warnings.push(`${row.at} 的画幅不在支持的七种尺寸中，将使用设置中的画幅。`);
         }
         const group = groups.get(offset) ?? [];
-        group.push({ summary: row.summary, prompt: row.prompt, ...(size ? { size } : {}) });
+        if (group.some(item => item.prompt.trim() === row.prompt.trim())) {
+            warnings.push(`${at} 的重复配图已跳过。`);
+            continue;
+        }
+        group.push({ summary, prompt: row.prompt, ...(size ? { size } : {}) });
         groups.set(offset, group);
+        retained++;
         if (itemIndex !== undefined)
             returnedItems.add(itemIndex);
     }
     if (requiredItems && returnedItems.size !== requiredItems.length) {
         const missing = requiredItems.flatMap((_, index) => returnedItems.has(index) ? [] : [index + 1]);
-        throw withFault(new Error(`AI 遗漏了清单中的配图 ${missing.join('、')}，原文未修改。`), 'format');
+        warnings.push(`AI 遗漏了清单中的配图 ${missing.join('、')}，其余有效配图继续处理。`);
     }
+    if (decoded.length && !retained)
+        throw withFault(new Error(`AI 未返回可用的配图计划：${warnings.join(' ')}`), 'format');
     const eol = newline(plan.original);
     const insertions = [];
     let totalLength = plan.original.length;

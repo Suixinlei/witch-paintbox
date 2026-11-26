@@ -88,7 +88,7 @@ function host(): FilterHost {
 
 function engine(): Promise<RegexEngine> {
   if (nativeEngine) return nativeEngine;
-  const pending = import(new URL('/scripts/extensions/regex/engine.js', location.href).href).then(value => {
+  const pending = import(/* @vite-ignore */ new URL('/scripts/extensions/regex/engine.js', location.href).href).then(value => {
     const module = value as Partial<RegexEngine>;
     if (typeof module.getScriptsByType !== 'function' || typeof module.saveScriptsByType !== 'function'
       || typeof module.getRegexedString !== 'function' || !Number.isInteger(module.SCRIPT_TYPES?.GLOBAL)

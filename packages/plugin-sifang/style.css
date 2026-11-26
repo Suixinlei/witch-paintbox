@@ -805,6 +805,9 @@ input[type="checkbox"] { flex: 0 0 auto; width: 18px; height: 18px; accent-color
 .shared-outfit-editor > .config-field + .config-field { margin-top: 18px; }
 .anchor-character { display: grid; grid-template-columns: 80px minmax(0, 1fr) auto; align-items: center; gap: 18px; width: 100%; padding: 0 0 16px; border: 0; border-bottom: 1px solid #96723b26; background: transparent; text-align: left; }
 .anchor-character > span { min-width: 0; }
+.anchor-character-details { grid-column: 2 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; min-width: 0; padding: 0; border: 0; background: transparent; text-align: left; }
+.anchor-character-details > span { min-width: 0; }
+.image-settings .anchor-preview-button { display: block; justify-self: start; padding: 0; border: 0; border-radius: 3px; background: transparent; cursor: zoom-in; }
 .anchor-portrait { width: 80px; height: 100px; display: block; object-fit: cover; border-radius: 3px; background: var(--surface); }
 .anchor-character strong { display: block; margin-bottom: 6px; color: var(--heading); font: 600 21px/1.5 var(--serif); overflow-wrap: anywhere; }
 .anchor-edit-label { padding: 4px 10px; border: 1px solid var(--border); border-radius: 3px; color: var(--accent); font-size: 12px; }

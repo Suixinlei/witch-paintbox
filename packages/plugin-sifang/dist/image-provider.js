@@ -17,13 +17,13 @@ export function applyMarkerSize(settings, size, enabled) {
     return { ...settings, parameters: { ...settings.parameters, ...imageSizeDimensions(size) } };
 }
 /** Send already expanded fields without interpreting library text as source-protocol syntax. */
-export async function generatePreparedImage(settings, prompt, signal, onProgress) {
+export async function generatePreparedImage(settings, prompt, signal, onProgress, size) {
     signal.throwIfAborted();
     if ((isSifangEnvironment() || isServiceEditor())) {
         const { requestServiceImage } = await import('./service-client.js');
-        return requestServiceImage({ input: { prompt } }, signal, onProgress);
+        return requestServiceImage({ input: { prompt, ...(size ? { size } : {}) } }, signal, onProgress);
     }
-    return drawNovelAI(settings, prompt, signal, onProgress);
+    return drawNovelAI(size ? { ...settings, parameters: { ...settings.parameters, ...imageSizeDimensions(size) } } : settings, prompt, signal, onProgress);
 }
 /** Freeze each click before asynchronous anchor loading and the shared request queue. */
 export async function generateConfiguredImage(settings, scene, signal, onProgress, artistPositive = '', service) {

@@ -11,6 +11,10 @@ import {
 const storageKey = 'witch-paintbox.standalone-service.v1';
 export interface ServiceConnection { url: string; token: string }
 let editorConnection: ServiceConnection | undefined;
+let editorFetch: typeof fetch | undefined;
+
+/** Hosts with a network sandbox can supply their native request bridge. */
+export function setEditorFetch(transport?: typeof fetch): void { editorFetch = transport; }
 
 export function setEditorConnection(connection: ServiceConnection): void { editorConnection = serviceConnection(connection); }
 export function isServiceEditor(): boolean { return editorConnection !== undefined; }
@@ -56,7 +60,7 @@ export async function sendService(path: string, body: Record<string, unknown> | 
   const combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   let response: Response;
   try {
-    response = await fetch(`${connection.url}/v1/${path}`, {
+    response = await (editorFetch ?? fetch)(`${connection.url}/v1/${path}`, {
       method: body === null ? 'GET' : 'POST', signal: combined, credentials: 'omit',
       cache: 'no-store', redirect: 'error', referrerPolicy: 'no-referrer',
       headers: { Authorization: `Bearer ${connection.token}`,

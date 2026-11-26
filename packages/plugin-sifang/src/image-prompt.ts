@@ -1,10 +1,12 @@
 import { loadAnchors, type CharacterAnchor } from './anchor-store.js';
 import { resolveAnchorPromptFields } from './anchor-resolver.js';
 import { loadSharedOutfits, type SharedOutfit } from './shared-outfit-store.js';
+import { readCharacterPosition, type CharacterPosition } from './character-position.js';
 
 export interface CharacterPrompt {
   positive: string;
   negative: string;
+  center?: CharacterPosition;
 }
 
 export interface PreparedImagePrompt {
@@ -110,8 +112,10 @@ export async function prepareImagePrompt(scene: string, globalNegative: string, 
     positive: [artistPositive, expanded.positive].filter(text => text.trim()).join(', '),
     negative: mergeNegative(globalNegative, expanded.negative),
     characters: parsed.characters.map(character => {
-      const expanded = expand(character.positive);
-      return { positive: expanded.positive, negative: mergeNegative(character.negative, expanded.negative) };
+      const { positive, center } = readCharacterPosition(character.positive);
+      const expanded = expand(positive);
+      return { positive: expanded.positive, negative: mergeNegative(character.negative, expanded.negative),
+        ...(center ? { center } : {}) };
     }),
   };
 }

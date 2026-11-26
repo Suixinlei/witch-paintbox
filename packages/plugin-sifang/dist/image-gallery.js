@@ -1,5 +1,6 @@
 import { NAI_MODELS, NAI_SAMPLERS, NAI_SCHEDULES } from './novelai.js';
 import { imageFileExtension } from './raster-image.js';
+import { createPromptCopyButton } from './novelai-link.js';
 /** Keep the current image, or its next surviving neighbour in the previous order. */
 export function gallerySelectionAfterUpdate(previous, next, selectedId) {
     const remaining = new Set(next.map(item => item.entry.id));
@@ -94,6 +95,7 @@ export function createImageGallery(summary, signal, handlers) {
   <header class="wp-gallery-header">
     <nav class="wp-gallery-tools" aria-label="当前图片操作">
       <a class="wp-gallery-action" data-gallery-download aria-label="下载当前图片" aria-disabled="true" tabindex="-1">下载</a>
+      <span data-gallery-novelai></span>
       <button type="button" data-gallery-delete aria-label="删除当前图片" disabled>删除</button>
       <button type="button" data-gallery-properties aria-label="查看生成属性" aria-expanded="false" disabled>生成属性</button>
       <button type="button" data-gallery-close aria-label="关闭图片查看器">关闭</button>
@@ -117,6 +119,7 @@ export function createImageGallery(summary, signal, handlers) {
   </div>`;
     const title = element.querySelector('.wp-gallery-title');
     const download = element.querySelector('[data-gallery-download]');
+    const novelai = element.querySelector('[data-gallery-novelai]');
     const deleteButton = element.querySelector('[data-gallery-delete]');
     deleteButton.hidden = !handlers.onDelete;
     const propertiesButton = element.querySelector('[data-gallery-properties]');
@@ -153,6 +156,10 @@ export function createImageGallery(summary, signal, handlers) {
     function renderSelected() {
         const index = items.findIndex(item => item.entry.id === selectedId);
         const current = items[index];
+        const novelaiLink = current && createPromptCopyButton(current.entry, message);
+        if (novelaiLink)
+            novelaiLink.className = 'wp-gallery-action';
+        novelai.replaceChildren(...(novelaiLink ? [novelaiLink] : []));
         counter.textContent = `${current ? index + 1 : 0} / ${items.length}`;
         deleteButton.disabled = !current || deletingId !== null;
         deleteButton.textContent = deletingId ? '删除中…' : '删除';
@@ -221,6 +228,8 @@ export function createImageGallery(summary, signal, handlers) {
         if (!entry.provider || entry.provider === 'novelai')
             promptFields.push([characterPrompts.length ? '全局负面提示词' : '负面提示词', entry.negative]);
         characterPrompts.forEach((character, index) => {
+            if (character.center)
+                promptFields.push([`角色 ${index + 1} · 画面位置`, `x: ${character.center.x}, y: ${character.center.y}`]);
             promptFields.push([`角色 ${index + 1} · 正面提示词`, character.positive]);
             promptFields.push([`角色 ${index + 1} · 负面提示词`, character.negative]);
         });

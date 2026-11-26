@@ -1,5 +1,5 @@
 import { prepareImagePrompt } from './image-prompt.js';
-import { generateImage } from './novelai.js';
+import { generateImage, snapshotCharacters } from './novelai.js';
 import { prepareVibeReferences } from './vibe-transfer.js';
 export function prepareNovelAIPrompt(snapshot, scene, artistPositive, library) {
     const model = snapshot.parameters.model;
@@ -9,7 +9,7 @@ export function prepareNovelAIPrompt(snapshot, scene, artistPositive, library) {
 export async function drawNovelAI(settings, prompt, signal, onProgress, vibesSource, send) {
     const connection = { ...settings.connection };
     const parameters = { ...settings.parameters };
-    const prepared = { positive: prompt.positive, negative: prompt.negative, characters: prompt.characters.map(character => ({ ...character })) };
+    const prepared = { positive: prompt.positive, negative: prompt.negative, characters: snapshotCharacters(prompt.characters, parameters.model) };
     // Encode before queueing so a failed or paid encoding never holds the shared image queue.
     const vibes = await prepareVibeReferences(connection, parameters.model, signal, vibesSource);
     const result = await generateImage(connection, parameters, prepared.positive, prepared.negative, signal, progress => onProgress?.({ ...progress, columns: prepared.characters.length }), prepared.characters, vibes, send);

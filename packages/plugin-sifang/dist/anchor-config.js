@@ -9,6 +9,10 @@ import { generatePreparedImage } from './image-provider.js';
 import { getHostStore } from './host-storage.js';
 import { loadSharedOutfits, saveSharedOutfit, deleteSharedOutfit, onSharedOutfitsChanged, } from './shared-outfit-store.js';
 import { emitPetEvent, petEnd, petFault, petTaskId, withFault } from './pet-events.js';
+/** A portrait must read as a front-facing, eye-level, full-length standing figure; framing leads the prompt so the artist preset cannot turn it into a close-up. */
+const PORTRAIT_FRAMING = '1.6::full body::, 1.5::standing::, 1.4::straight-on::, looking at viewer, wide shot, simple background, feet visible';
+const PORTRAIT_NEGATIVE = 'from side, from behind, from above, high angle view, low angle view, looking down at viewer, fisheye, wide-angle lens, foreshortening, dynamic angle, dutch angle, leaning forward, close-up, upper body, cowboy shot, cropped legs, out of frame';
+const PORTRAIT_SIZE = '832x1216';
 function escape(value) {
     return value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 }
@@ -49,6 +53,10 @@ function selectableTags(prompt) {
     return tags;
 }
 export class AnchorConfig {
+    repository;
+    constructor(repository) {
+        this.repository = repository;
+    }
     container = null;
     listeners = null;
     unsubscribe = [];
@@ -78,6 +86,7 @@ export class AnchorConfig {
     deleting = false;
     picker = null;
     urls = [];
+    portraitPreview = null;
     notice = '';
     failed = false;
     portraitRequest = null;
@@ -125,14 +134,49 @@ export class AnchorConfig {
     }
     destroy() { this.cancelPortrait(); this.unmount(); }
     releaseUrls() {
+        this.portraitPreview?.close();
+        this.portraitPreview?.remove();
+        this.portraitPreview = null;
         this.urls.splice(0).forEach(url => URL.revokeObjectURL(url));
     }
-    image(blob, className) {
+    image(blob, className, preview = false) {
         if (!blob)
             return `<span class="${className} anchor-no-image" aria-label="尚未设置角色图">✦</span>`;
         const url = URL.createObjectURL(blob);
         this.urls.push(url);
-        return `<img class="${className}" src="${url}" alt="" loading="lazy">`;
+        const image = `<img class="${className}" src="${url}" alt="" loading="lazy">`;
+        return preview ? `<button type="button" class="anchor-preview-button" data-anchor-preview aria-label="展开人设图">${image}</button>` : image;
+    }
+    previewPortrait(source) {
+        this.portraitPreview?.close();
+        this.portraitPreview?.remove();
+        const dialog = document.createElement('dialog');
+        dialog.className = 'wp-portrait-preview';
+        dialog.setAttribute('aria-label', '人设图预览');
+        dialog.innerHTML = `<style>
+      .wp-portrait-preview { position: fixed; inset: 0; width: min(96vw, 1200px); height: 94vh; height: 94dvh; max-width: 96vw; max-height: 94dvh; margin: auto; padding: 12px; border: 0; border-radius: 6px; background: #fdfaf2; color: #3c3931; box-sizing: border-box; }
+      .wp-portrait-preview[open] { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 10px; }
+      .wp-portrait-preview::backdrop { background: #000b; }
+      .wp-portrait-preview button { justify-self: end; padding: 8px 16px; cursor: pointer; font: 14px system-ui; }
+      .wp-portrait-preview img { width: 100%; height: 100%; min-height: 0; object-fit: contain; }
+    </style><button type="button" aria-label="关闭人设图预览">关闭</button><img alt="人设图">`;
+        dialog.querySelector('img').src = source.src;
+        dialog.querySelector('button').addEventListener('click', () => dialog.close());
+        dialog.addEventListener('click', event => {
+            if (event.target !== dialog)
+                return;
+            const rect = dialog.getBoundingClientRect();
+            if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)
+                dialog.close();
+        });
+        dialog.addEventListener('close', () => {
+            dialog.remove();
+            if (this.portraitPreview === dialog)
+                this.portraitPreview = null;
+        }, { once: true });
+        document.body.append(dialog);
+        this.portraitPreview = dialog;
+        dialog.showModal();
     }
     message(text, error = false) {
         this.notice = text;
@@ -176,7 +220,7 @@ export class AnchorConfig {
     async refreshAnchors() {
         const request = ++this.anchorsRequest;
         try {
-            const anchors = await loadAnchors();
+            const anchors = await (this.repository ? this.repository.load() : loadAnchors());
             if (!this.container || request !== this.anchorsRequest)
                 return;
             this.anchors = anchors;
@@ -233,11 +277,13 @@ export class AnchorConfig {
       ${this.anchorsError ? `<p class="anchor-empty is-error" role="alert">${escape(this.anchorsError)}</p><button type="button" class="text-button" data-anchor-action="reload">重新读取</button>` : ''}
       ${!this.anchors.length && !this.anchorsError ? `<p class="anchor-empty">还没有锚定角色。${isServiceEditor() ? '可使用“新建角色”添加。' : '可以从“本轮生图”挑一张图片，也可以直接新建。'}</p>` : ''}
       <div class="anchor-library">${this.anchors.map(anchor => `<article class="anchor-record">
-        <button type="button" class="anchor-character" data-anchor-id="${escape(anchor.id)}">
-          ${this.image(anchor.portrait, 'anchor-portrait')}
+        <div class="anchor-character">
+          ${this.image(anchor.portrait, 'anchor-portrait', true)}
+          <button type="button" class="anchor-character-details" data-anchor-id="${escape(anchor.id)}">
           <span><strong>${escape(anchor.name)}</strong>${anchor.aliases.length ? `<span class="anchor-aliases">又称：${escape(anchor.aliases.join('、'))}</span>` : ''}<span class="anchor-tag-excerpt">${escape(anchor.appearance)}</span></span>
           <span class="anchor-edit-label">编辑</span>
-        </button>
+          </button>
+        </div>
         <ul class="anchor-wardrobe">${anchor.outfits.map(outfit => `<li><button type="button" data-anchor-id="${escape(anchor.id)}" data-anchor-outfit="${escape(outfit.id)}"><span>${escape(outfit.name)}</span>${anchor.selectedOutfitId === outfit.id ? '<small>当前服装</small>' : ''}</button></li>`).join('')}
           <li><button type="button" class="anchor-add-outfit" data-anchor-id="${escape(anchor.id)}" data-anchor-outfit="new">＋ 添加服装</button></li>
         </ul>
@@ -273,7 +319,7 @@ export class AnchorConfig {
         const exists = this.anchors.some(anchor => anchor.id === draft.id);
         return `<div class="anchor-toolbar"><h3 class="subsection-title">${exists ? '编辑角色' : '配置角色'}</h3><button type="button" class="text-button" data-anchor-action="back"${this.busy ? ' disabled' : ''}>返回列表</button></div>
       <fieldset class="anchor-editor"${this.busy ? ' disabled' : ''}>
-        <div class="anchor-identity">${this.image(draft.portrait, 'anchor-editor-portrait')}
+        <div class="anchor-identity">${this.image(draft.portrait, 'anchor-editor-portrait', true)}
           <div class="anchor-identity-fields"><label class="config-field"><span>角色中文名称</span><input type="text" data-anchor-field="name" value="${escape(draft.name)}" maxlength="${ANCHOR_NAME_LIMIT}" placeholder="例如：莎莉" autocomplete="off"></label>
             <label class="config-field"><span>别名与称呼</span><textarea rows="3" data-anchor-field="aliases" spellcheck="false" placeholder="每行一个，也可用逗号分隔" aria-describedby="anchor-aliases-hint">${escape(draft.aliases.join('\n'))}</textarea></label>
             <p class="config-status" id="anchor-aliases-hint">每个称呼需含汉字，最多 ${ANCHOR_ALIAS_LIMIT} 个；可用换行、中英文逗号分隔。别名共用当前角色的外貌与服装。</p>
@@ -592,10 +638,10 @@ export class AnchorConfig {
             const snapshot = structuredClone(draft);
             snapshot.updatedAt = Date.now();
             if (remove)
-                await deleteAnchor(snapshot.id);
+                await (this.repository ? this.repository.remove(snapshot.id) : deleteAnchor(snapshot.id));
             else
-                await saveAnchor(snapshot);
-            if (isServiceEditor())
+                await (this.repository ? this.repository.save(snapshot) : saveAnchor(snapshot));
+            if (!this.repository && isServiceEditor())
                 await flushServiceConfig();
             // Only update the matching editor; navigation may have unmounted it.
             if (this.draft === draft) {
@@ -606,7 +652,7 @@ export class AnchorConfig {
                 this.picker = null;
                 this.dirty = false;
                 this.deleting = false;
-                this.message(remove ? '角色及服装库已删除。' : getHostStore() ? '角色与服装已保存到 TT 扩展数据。' : '角色与服装已保存在当前浏览器。');
+                this.message(remove ? '角色及服装库已删除。' : this.repository ? '角色与服装已保存到本卡资料。' : isServiceEditor() ? '角色与服装已保存到服务。' : getHostStore() ? '角色与服装已保存到 TT 扩展数据。' : '角色与服装已保存在当前浏览器。');
             }
         }
         catch (error) {
@@ -679,8 +725,8 @@ export class AnchorConfig {
                 throw withFault(new Error('请先填写角色的固定外貌 tag。'), 'setup');
             const settings = loadImageSettings();
             emitPetEvent({ type: 'image', id: pet, source: 'portrait', phase: 'start', provider: settings.provider, summary: draft.name });
-            const positive = ['solo', settings.positive, appearance, outfitTags].map(part => part.trim()).filter(Boolean).join(', ');
-            const combinedNegative = [settings.negative, negative].map(part => part.trim()).filter(Boolean).join(', ');
+            const positive = ['solo', PORTRAIT_FRAMING, settings.positive, appearance, outfitTags].map(part => part.trim()).filter(Boolean).join(', ');
+            const combinedNegative = [settings.negative, PORTRAIT_NEGATIVE, negative].map(part => part.trim()).filter(Boolean).join(', ');
             const result = await generatePreparedImage(settings, { positive, negative: combinedNegative, characters: [] }, request.signal, progress => {
                 if (request.signal.aborted || !current())
                     return;
@@ -689,7 +735,7 @@ export class AnchorConfig {
                 emitPetEvent({ type: 'image', id: pet, source: 'portrait', phase: progress.state,
                     position: progress.state === 'queued' ? progress.position : undefined });
                 this.syncPortrait();
-            });
+            }, PORTRAIT_SIZE);
             if (request.signal.aborted || !current()) {
                 endPet({ ...petImage, result: 'dropped', paid: true, message: '' });
                 return;
@@ -734,6 +780,12 @@ export class AnchorConfig {
         const button = target.closest('button');
         if (!button || button.disabled || this.busy)
             return;
+        if (button.hasAttribute('data-anchor-preview')) {
+            const image = button.querySelector('img');
+            if (image)
+                this.previewPortrait(image);
+            return;
+        }
         const tab = button.dataset.anchorTab;
         if (tab === 'round' || tab === 'anchors' || tab === 'shared-outfits') {
             this.tab = tab;

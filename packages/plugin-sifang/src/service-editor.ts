@@ -14,7 +14,8 @@ import { sendService, setEditorConnection, type ServiceConnection } from './serv
 import { bindLocalPreferences, defaultSettings, isPaintboxTheme, readAutoImageDelay, readPetScale, readSettings, saveSettings } from './settings.js';
 import { clientAppearanceView, imageWorkflowView, workflowStatus } from './views.js';
 
-export async function mountServiceEditor(container: HTMLElement, connection: ServiceConnection): Promise<void> {
+export async function mountServiceEditor(container: HTMLElement, connection: ServiceConnection,
+  options: { css?: string } = {}): Promise<() => void> {
   setEditorConnection(connection);
   initializeEditorStorage();
   await Promise.all([initializeSettingsStorage(), initializeNativeLibraries()]);
@@ -75,12 +76,16 @@ export async function mountServiceEditor(container: HTMLElement, connection: Ser
       </section>`;
     const stylesheet = document.createElement('link');
     stylesheet.rel = 'stylesheet';
-    stylesheet.href = new URL('../style.css', import.meta.url).href;
+    if (options.css === undefined) stylesheet.href = new URL('../style.css', import.meta.url).href;
     const loaded = new Promise<void>((resolve, reject) => {
       stylesheet.addEventListener('load', () => resolve(), { once: true });
       stylesheet.addEventListener('error', () => reject(new Error('全局配置样式未能加载。')), { once: true });
     });
-    root.prepend(stylesheet);
+    if (options.css !== undefined) {
+      const style = document.createElement('style');
+      style.textContent = options.css;
+      root.prepend(style);
+    } else root.prepend(stylesheet);
     cleanup = () => {
       image.destroy();
       model.destroy();
@@ -166,7 +171,8 @@ export async function mountServiceEditor(container: HTMLElement, connection: Ser
       controller.abort();
       cleanup();
     }, { signal });
-    await loaded;
+    if (options.css === undefined) await loaded;
+    return () => { controller.abort(); cleanup(); root.replaceChildren(); };
   } catch (error) {
     controller.abort();
     cleanup();

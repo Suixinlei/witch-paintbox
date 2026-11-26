@@ -7,6 +7,7 @@ import { isImageSizeModeSaving, loadModelSettings } from './model-settings.js';
 import { stageSifangBatch } from './sifang-batch.js';
 import { notifyImageHistorySaved } from './image-history.js';
 import { imagePlanningInput } from './image-planning.js';
+import { loadImageSettings } from './image-settings.js';
 import { isSifangEnvironment } from './sifang-host.js';
 import { captureSifangAssistant, readSifangFloor, sifangSnapshotNode, type SifangFloorTarget } from './sifang-chat.js';
 import type { ImageInsertionResult } from './image-insertion.js';
@@ -110,7 +111,7 @@ export class ChatProcessor {
         const plan = items ? selectImageInsertionPoints(original, items.flatMap(item => [...item.pointIds])) : original;
         const { runConfiguredModel } = await import('./model-service.js');
         const candidate = await runConfiguredModel({
-          messages: [{ role: 'user', content: imagePlanningInput(plan, items) }], sourceText: snapshot.text, signal: controller.signal,
+          messages: [{ role: 'user', content: imagePlanningInput(plan, items, loadImageSettings('novelai').parameters.model !== 'nai-diffusion-3') }], sourceText: snapshot.text, signal: controller.signal,
         }, text => {
           this.report(`AI 处理中 · 已返回 ${text.length} 字符`, true);
           emitPetEvent({ type: 'process', id: pet, phase: 'thinking', floor, chars: text.length, cancellable: true });

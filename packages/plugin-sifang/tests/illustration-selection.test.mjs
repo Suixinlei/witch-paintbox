@@ -14,6 +14,48 @@ const prepare = (text, excluded = []) => {
 const group = (value, first, last) => groupIllustrationLines(value.plan, value.units, first - 1, last - 1);
 const row = (id) => ({ at: id, summary: '场景', prompt: 'test illustration' });
 
+test('model output recovers individual bad rows and retains the first valid plans within capacity', () => {
+  const original = '庭院。\r\n湖边。\r\n门口。';
+  const plan = createImageInsertionPlan(original);
+  const rows = [
+    null,
+    { ...row('P999'), prompt: 'wrong location' },
+    { at: ' P002 ', prompt: 'lake', size: 'wrong', explanation: 'extra metadata' },
+    { ...row('P001'), prompt: '' },
+    { ...row('P002'), prompt: 'lake' },
+    { ...row('P001'), summary: '[庭院]\n近景', prompt: 'garden', extra: true },
+    { ...row('P003'), prompt: 'over limit' },
+  ];
+  const response = `<think>planning</think>\n\`\`\`json\n${JSON.stringify({ images: rows, explanation: 'done' })}\n\`\`\``;
+  const result = applyImageInsertions(plan, response, undefined, 2);
+  assert.deepEqual(result.added.map(marker => marker.prompt), ['garden', 'lake']);
+  assert.deepEqual(result.added.map(marker => marker.summary), ['庭院 近景', '配图 3']);
+  assert.deepEqual(result.added.map(marker => marker.sourceOffset), [plan.points[0].offset, plan.points[1].offset]);
+  assert.equal(result.added[1].size, undefined);
+  assert.match(result.warnings.join(' '), /无效或未选择/);
+  assert.match(result.warnings.join(' '), /重复/);
+  assert.match(result.warnings.join(' '), /保留前 2 张/);
+  assert.equal(parseImageMarkers(result.text).length, 2);
+  for (const marker of result.added) assert.equal(result.text.slice(marker.start, marker.end), marker.raw);
+  assert.ok(result.text.startsWith('庭院。\r\n'));
+  assert.ok(result.text.endsWith('门口。'));
+  assert.throws(() => applyImageInsertions(plan, JSON.stringify([null, row('P999')])), /未返回可用/);
+  assert.deepEqual(applyImageInsertions(plan, '[]').added, []);
+  assert.throws(() => applyImageInsertions(plan, 'not JSON'), /JSON/);
+});
+
+test('model excess is capped by remaining marker capacity while preserving existing images', () => {
+  const existing = Array.from({ length: 63 }, (_, index) => `<img>\n[旧图 ${index}]\nold ${index}\n</img>\n`).join('');
+  const plan = createImageInsertionPlan(existing + '正文。');
+  const result = applyImageInsertions(plan, JSON.stringify([
+    { ...row(plan.points.at(-1).id), prompt: 'first' },
+    { ...row(plan.points.at(-1).id), prompt: 'excess' },
+  ]), undefined, 3);
+  assert.equal(result.added.length, 1);
+  assert.equal(parseImageMarkers(result.text).length, 64);
+  assert.ok(result.text.startsWith(existing));
+});
+
 test('HTML-indented prose remains selectable in all existing grouping modes', () => {
   assert.equal(imageTextRegions(html).some(region => region.kind === 'code'), false);
   const { plan, units } = prepare(html);
@@ -162,8 +204,12 @@ test('one manual range produces one image without rewriting any original charact
     expected = expected.slice(0, offset) + insertion + expected.slice(offset);
   }
   assert.equal(result.text, expected);
-  assert.throws(() => applyImageInsertions(selectedPlan, JSON.stringify(response.slice(0, 1)), items), /遗漏/);
-  assert.throws(() => applyImageInsertions(selectedPlan, JSON.stringify([...response, row(items[0].pointIds[0])]), items), /多条/);
+  const partial = applyImageInsertions(selectedPlan, JSON.stringify(response.slice(0, 1)), items);
+  assert.equal(partial.added.length, 1);
+  assert.match(partial.warnings.join(' '), /遗漏/);
+  const repeated = applyImageInsertions(selectedPlan, JSON.stringify([...response, row(items[0].pointIds[0])]), items);
+  assert.equal(repeated.added.length, 2);
+  assert.match(repeated.warnings.join(' '), /多条/);
   const unselected = value.plan.points.find(point => !selectedPlan.points.includes(point));
   assert.throws(() => applyImageInsertions(value.plan, JSON.stringify([row(unselected.id)]), items), /未选择/);
   assert.equal(value.plan.original, html);
