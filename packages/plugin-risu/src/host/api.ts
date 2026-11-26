@@ -74,6 +74,7 @@ export interface RisuApi {
     images: {
       id: string;
       path: string;
+      planned?: boolean;
       alt: string;
       offset?: number;
       order?: number;

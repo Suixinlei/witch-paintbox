@@ -23,7 +23,7 @@ const illustrations = [
 async function setup(page: Page) {
   await page.goto("/e2e/fixture/");
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
   await page.evaluate((plan) => {
     window.harness.seedLibrary();
@@ -32,7 +32,7 @@ async function setup(page: Page) {
   }, illustrations);
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
 }
 
@@ -128,7 +128,7 @@ test("一次配图请求生成两幅原位插图，重画只替换选中的图",
   ).toBeUndefined();
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
   await page.evaluate((text) => window.harness.emitRaw(text), reply);
   await expect.poll(async () => (await jobs(page)).length).toBe(3);
@@ -297,7 +297,7 @@ test("跳过模型思考块，并复用之前落盘的配图结果", async ({ pa
   }, raw);
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
   await page.evaluate((text) => window.harness.emitRaw(text), reply);
   await expect
@@ -334,7 +334,7 @@ test("跳过模型思考块，并复用之前落盘的配图结果", async ({ pa
   );
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
   await page.evaluate((text) => window.harness.emitRaw(text), reply);
   expect(
@@ -465,7 +465,7 @@ test("本机 LM Studio 单独写标签，优先保留命中世界书并为输出
   });
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
   await page.evaluate((text) => window.harness.emitRaw(text), reply);
   await expect

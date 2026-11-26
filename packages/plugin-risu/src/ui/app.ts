@@ -12,10 +12,15 @@ export function createUi(services: UiServices, hide: () => Promise<void>) {
   const renderLibrary = createLibraryView();
   const renderOutfits = createOutfitsView();
   const { runtime } = services;
+  const close = async () => {
+    await hide();
+  };
   let view: View =
       services.generation.state.settings.execution === "legacy"
         ? "library"
-        : "connection",
+        : services.generation.state.paintboxConnection
+          ? "automatic"
+          : "connection",
     selected: string | null = null;
   const style = el("style", css, document.head);
   const meta = el("meta", undefined, document.head);
@@ -29,9 +34,13 @@ export function createUi(services: UiServices, hide: () => Promise<void>) {
       return;
     }
     document.body.replaceChildren();
+    document.body.classList.toggle(
+      "service-ui",
+      services.generation.state.settings.execution !== "legacy",
+    );
     const header = el("header", undefined, document.body);
     const legacy = services.generation.state.settings.execution === "legacy";
-    el("h1", legacy ? "全局生图 · 两步流程" : "全局生图", header);
+    el("h1", legacy ? "魔女画匣 · 两步流程" : "魔女画匣", header);
     const nav = el("nav", undefined, header);
     const items: readonly (readonly [View, string])[] = legacy
       ? [
@@ -50,7 +59,14 @@ export function createUi(services: UiServices, hide: () => Promise<void>) {
       const node = button(nav, title, () => open(key));
       if (view === key) node.className = "active";
     }
-    button(header, "关闭", hide);
+    if (!legacy && services.generation.state.paintboxConnection) {
+      const link = el("a", "服务管理台 ↗", nav);
+      link.href = services.generation.state.paintboxConnection.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.className = "service-dashboard-link";
+    }
+    button(header, "关闭", close);
     const main = el("main", undefined, document.body),
       note = el("div", runtime.status, main);
     note.id = "status";
@@ -87,14 +103,18 @@ export function createUi(services: UiServices, hide: () => Promise<void>) {
     if (event.key === "Escape") {
       const big = document.querySelector("img.large");
       if (big) big.classList.remove("large");
-      else void hide();
+      else
+        void close().catch((error) => {
+          runtime.status = errorText(error);
+          runtime.notify(false);
+        });
     }
   };
   document.addEventListener("keydown", keydown);
   return {
     render,
     open,
-    destroy() {
+    async destroy() {
       document.removeEventListener("keydown", keydown);
       style.remove();
       meta.remove();

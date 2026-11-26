@@ -61,7 +61,7 @@ function reply(ids: string[], plan: unknown = drawing(ids)) {
 async function seed(page: Page) {
   await page.goto("/e2e/fixture/");
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
   await page.evaluate((data) => {
     window.harness.editLibrary(JSON.parse(data));
@@ -69,7 +69,7 @@ async function seed(page: Page) {
   }, JSON.stringify(library));
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
 }
 async function jobs(page: Page) {
@@ -327,7 +327,7 @@ for (const ids of [
     }
     await page.reload();
     await expect(
-      page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+      page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
     ).toBeVisible();
     expect(
       (await page.evaluate(() => window.harness.snapshot())).submissions,

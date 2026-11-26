@@ -30,7 +30,7 @@ const jobs = async (page: Page): Promise<GenerationJob[]> =>
 async function installFixture(page: Page) {
   await page.goto("/e2e/fixture/");
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
   await page.evaluate(() =>
     window.harness.configure({
@@ -52,13 +52,13 @@ async function installFixture(page: Page) {
   await expect(page.getByLabel("助手回复完成后自动配图")).toHaveCount(0);
 }
 
-test("Risu receives two inline pictures in one response and redraws only the selected picture", async ({
+test("Risu persists summaries without drawing until the selected summary is clicked", async ({
   page,
 }) => {
   await page.route("**/e2e-paintbox/v1/**", async (route) => {
     const endpoint = new URL(route.request().url()).pathname.split("/").at(-1);
     if (endpoint === "health")
-      return route.fulfill({ json: { version: 2, revision: "configured" } });
+      return route.fulfill({ json: { version: 3, revision: "configured" } });
     if (endpoint === "preferences")
       return route.fulfill({ json: { enabled: true } });
     const body = route.request().postDataJSON();
@@ -66,42 +66,25 @@ test("Risu receives two inline pictures in one response and redraws only the sel
       expect(body.original).not.toContain("HIDDEN");
       expect(body.maxImages).toBeUndefined();
       expect(body.risu).toEqual({ cardId: "char-A", automatic: true });
-      expect(body.draw.scope).toBe("risu:char-A");
+      expect(body.draw).toBeUndefined();
       return route.fulfill({
         contentType,
-        body: packet(
-          {
-            added: [
-              {
-                start: line.length + 2,
-                sourceOffset: line.length + 2,
-                summary: "Paper boat",
-                prompt: "red paper boat, lake",
-              },
-              {
-                start: reply.length + 60,
-                sourceOffset: reply.length,
-                summary: "Pine reflections",
-                prompt: "pine tree reflections, lake",
-              },
-            ],
-            pictures: [
-              {
-                start: line.length + 2,
-                markerKey: "marker",
-                entry: { id: "server-original", markerKey: "marker" },
-                blobIndex: 0,
-              },
-              {
-                start: reply.length + 60,
-                markerKey: "marker-two",
-                entry: { id: "server-second", markerKey: "marker-two" },
-                blobIndex: 1,
-              },
-            ],
-          },
-          [png, png],
-        ),
+        body: packet({
+          added: [
+            {
+              start: line.length + 2,
+              sourceOffset: line.length + 2,
+              summary: "Paper boat",
+              prompt: "red paper boat, lake",
+            },
+            {
+              start: reply.length + 60,
+              sourceOffset: reply.length,
+              summary: "Pine reflections",
+              prompt: "pine tree reflections, lake",
+            },
+          ],
+        }),
       });
     }
     expect(endpoint).toBe("images");
@@ -118,23 +101,48 @@ test("Risu receives two inline pictures in one response and redraws only the sel
   }, reply);
   await expect
     .poll(async () => (await snapshot(page)).attachments.length)
-    .toBe(2);
+    .toBe(1);
   const [original, second] = await jobs(page);
   expect(original).toMatchObject({
-    serviceImageId: "server-original",
-    attachmentState: "attached",
+    awaitingClick: true,
+    summaryAttached: true,
+    files: [],
   });
   const state = await snapshot(page);
   expect(state.attachments[0]).toMatchObject({
     expectedRawMessageText: reply,
-    images: [{ alt: "Paper boat", offset: line.length }],
-  });
-  expect(state.attachments[1]).toMatchObject({
-    expectedRawMessageText: reply,
-    images: [{ alt: "Pine reflections", offset: reply.length }],
+    images: [
+      { alt: "Paper boat", offset: line.length, planned: true, path: "" },
+      {
+        alt: "Pine reflections",
+        offset: reply.length,
+        planned: true,
+        path: "",
+      },
+    ],
   });
   expect(state.files[`automatic-image-${original.id}-0`]).toBeUndefined();
   expect(state.files[`automatic-image-${second.id}-0`]).toBeUndefined();
+  expect(
+    state.calls.filter(
+      ({ kind, payload }) =>
+        kind === "paintbox" &&
+        (payload as { path?: string }).path === "/v1/images",
+    ),
+  ).toHaveLength(0);
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "服务连接", exact: true }),
+  ).toBeVisible();
+  await page.evaluate((text) => window.harness.emitRaw(text), reply);
+  await expect.poll(async () => (await jobs(page)).length).toBe(2);
+  expect(
+    (await snapshot(page)).calls.filter(
+      ({ kind, payload }) =>
+        kind === "paintbox" &&
+        (payload as { path?: string }).path === "/v1/images",
+    ),
+  ).toHaveLength(0);
   expect(
     await page.evaluate(
       (id) => window.harness.request("regenerate", true, id),
@@ -143,41 +151,27 @@ test("Risu receives two inline pictures in one response and redraws only the sel
   ).toMatchObject({ accepted: true });
   await expect
     .poll(async () => (await snapshot(page)).attachments.length)
-    .toBe(3);
+    .toBe(2);
   const finished = await snapshot(page);
-  expect(finished.attachments[2]).toMatchObject({
+  expect(finished.attachments[1]).toMatchObject({
     replaceImageIds: expect.arrayContaining([`${original.id}:0`]),
   });
-  expect(finished.attachments[2]).not.toMatchObject({
+  expect(finished.attachments[1]).not.toMatchObject({
     replaceImageIds: expect.arrayContaining([`${second.id}:0`]),
   });
+  const requests = finished.calls
+    .filter(({ kind }) => kind === "paintbox")
+    .map(({ payload }) => payload as { path: string });
   expect(
-    finished.calls
-      .filter(({ kind }) => kind === "paintbox")
-      .map(({ payload }) => payload)
-      .filter(
-        (payload) =>
-          !(
-            typeof payload === "object" &&
-            payload &&
-            "path" in payload &&
-            payload.path === "/v1/risu/preferences"
-          ),
-      ),
-  ).toEqual([
-    expect.objectContaining({
-      path: "/v1/health",
-      networkRoute: "local_network",
-    }),
-    expect.objectContaining({
-      path: "/v1/plan",
-      networkRoute: "local_network",
-    }),
-    expect.objectContaining({
-      path: "/v1/images",
-      networkRoute: "local_network",
-    }),
-  ]);
+    requests.filter((request) => request.path === "/v1/plan"),
+  ).toHaveLength(1);
+  expect(
+    requests.filter((request) => request.path === "/v1/images"),
+  ).toHaveLength(1);
+  expect((await jobs(page)).find((job) => job.id === second.id)).toMatchObject({
+    awaitingClick: true,
+    files: [],
+  });
   expect(
     finished.calls.filter(({ kind }) => ["model", "novelai"].includes(kind)),
   ).toEqual([]);
@@ -215,6 +209,16 @@ test("real Paintbox planning, NovelAI PNG and Risu attachment", async ({
   });
   await installFixture(page);
   await page.evaluate((text) => window.harness.emitRaw(text), line);
+  await expect
+    .poll(async () => (await jobs(page)).some((job) => job.awaitingClick), {
+      timeout: 120_000,
+    })
+    .toBe(true);
+  const planned = (await jobs(page)).find((job) => job.awaitingClick)!;
+  await page.evaluate(
+    (id) => window.harness.request("regenerate", true, id),
+    planned.id + ":0",
+  );
   let terminal: GenerationJob | undefined;
   await expect
     .poll(

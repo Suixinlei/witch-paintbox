@@ -30,7 +30,7 @@ test("复制会话：真实主模型选镜头、统一姓名并提交一张隔�
   };
   await page.goto("/e2e/fixture/");
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
   await page.evaluate(
     (serialized) => {
@@ -52,7 +52,7 @@ test("复制会话：真实主模型选镜头、统一姓名并提交一张隔�
   );
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
   const injected = await page.evaluate(() => window.harness.inject());
   const worldbook = injected.at(-1)!.content;

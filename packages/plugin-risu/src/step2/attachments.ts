@@ -20,6 +20,55 @@ export function createAttachments(deps: {
   const { api, storage, runtime, state, markAuto, persistAutomaticJobs } = deps;
   type Bytes = Uint8Array<ArrayBuffer>;
 
+  async function attachPlannedSummaries(jobs: GenerationJob[]) {
+    const job = jobs[0];
+    if (!job || runtime.disposed) return;
+    const replaceAll = job.replaceReplyImages && !job.summaryAttached;
+    if (replaceAll && job.illustrationBatch)
+      jobs = state.jobs.filter(
+        (item) =>
+          item.illustrationBatch === job.illustrationBatch &&
+          item.awaitingClick &&
+          !item.supersededBy &&
+          item.illustration,
+      );
+    const result = await api.appendMessageImages({
+      characterId: job.source.characterId,
+      chatId: job.source.chatId,
+      messageId: job.messageId || undefined,
+      expectedMessageText: job.pair.assistantMessage,
+      expectedRawMessageText: job.pair.rawAssistantMessage,
+      expectedUserText: job.pair.userMessage,
+      images: jobs.map((item) => ({
+        id: item.id + ":0",
+        path: "",
+        planned: true,
+        alt: item.illustration!.summary,
+        offset: item.illustration!.offset,
+        order: item.illustrationOrder,
+      })),
+      replaceImageIds: jobs.map((item) => item.id + ":0"),
+      ...(replaceAll ? { replaceAll: true } : {}),
+    });
+    if (!result?.attached)
+      throw new Error(result?.reason || "未能挂载配图概括");
+    for (const item of jobs) item.summaryAttached = true;
+    if (replaceAll)
+      for (const old of state.jobs) {
+        if (
+          !jobs.includes(old) &&
+          !old.supersededBy &&
+          old.source.characterId === job.source.characterId &&
+          old.source.chatId === job.source.chatId &&
+          (job.messageId
+            ? old.messageId === job.messageId
+            : old.eventKey === job.eventKey)
+        )
+          old.supersededBy = job.illustrationBatch ?? job.id;
+      }
+    await persistAutomaticJobs();
+  }
+
   async function saveImages(job: GenerationJob, returnedBytes?: Bytes) {
     const images = [];
     const i = (job.files?.length ?? 0) - 1;
@@ -188,6 +237,10 @@ export function createAttachments(deps: {
       await attachAutomaticImages(job);
     }
   }
-  return { attachAutomaticImages, reconcileInlineImages };
+  return {
+    attachAutomaticImages,
+    attachPlannedSummaries,
+    reconcileInlineImages,
+  };
 }
 export type Attachments = ReturnType<typeof createAttachments>;

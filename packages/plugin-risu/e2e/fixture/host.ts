@@ -11,6 +11,7 @@ import type {
   RequestMessage,
 } from "../../src/host/api";
 import { clean } from "../../src/shared/text";
+import { expandJobIndex, type JobIndex } from "../../src/step2/jobStorage";
 import type {
   Accepted,
   Character,
@@ -25,6 +26,7 @@ import type {
 } from "../../src/domain/types";
 
 interface SavedHost {
+  writeFailures?: { name: string; remaining: number };
   observerName?: string;
   illustrationResponse?: string;
   illustrationLore?: LoreEntry[];
@@ -245,6 +247,16 @@ const api: RisuApi = {
     return state.files[name] ?? null;
   },
   async writeServerFile(name, value) {
+    if (
+      state.writeFailures?.name === name &&
+      state.writeFailures.remaining > 0
+    ) {
+      state.writeFailures.remaining--;
+      save();
+      throw new Error(
+        "Node storage setItem request failed. Cause: Load failed",
+      );
+    }
     state.files[name] = value;
     log("write", name);
   },
@@ -326,16 +338,22 @@ const api: RisuApi = {
   async nativeFetch(url, options) {
     const target = new URL(url);
     if (target.hostname === "127.0.0.1" && target.port === "4783") {
+      // Risu nativeFetch defaults to POST, unlike browser fetch.
+      const method = options?.method ?? "POST";
+      if (method === "POST" && options?.body === undefined)
+        throw new Error("Invalid body type");
       log("paintbox", {
         path: target.pathname,
-        method: options?.method,
+        method,
         networkRoute: options?.networkRoute,
         body: options?.body
-          ? (JSON.parse(String(options.body)) as unknown)
+          ? typeof options.body === "string"
+            ? (JSON.parse(options.body) as unknown)
+            : "binary-config"
           : null,
       });
       return fetch("/e2e-paintbox" + target.pathname, {
-        method: options?.method,
+        method,
         headers: options?.headers,
         body: options?.body,
       });
@@ -644,6 +662,8 @@ declare global {
     risuai: RisuApi;
     harness: {
       snapshot(): SavedHost;
+      rawSnapshot(): SavedHost;
+      failWrites(name: string, remaining: number): void;
       seedLibrary(): void;
       configure(patch: Partial<GenerationSettings>): void;
       mode(value: SavedHost["mode"]): void;
@@ -702,7 +722,25 @@ window.harness = {
       messageIndex: 3,
     });
   },
-  snapshot: () => structuredClone(state),
+  // Existing assertions inspect logical jobs; rawSnapshot exposes the actual V2 files.
+  snapshot: () => {
+    const copy = structuredClone(state);
+    if (copy.files["automatic-jobs"])
+      copy.files["automatic-jobs"] = JSON.stringify(
+        expandJobIndex(
+          JSON.parse(copy.files["automatic-jobs"]) as
+            | GenerationJob[]
+            | JobIndex,
+          (ref) => JSON.parse(copy.files["automatic-context-" + ref]),
+        ),
+      );
+    return copy;
+  },
+  rawSnapshot: () => structuredClone(state),
+  failWrites(name, remaining) {
+    state.writeFailures = { name, remaining };
+    save();
+  },
   seedLibrary() {
     state.files["library-char-A"] = JSON.stringify(library);
     save();
@@ -801,7 +839,9 @@ window.harness = {
     });
   },
   moveJobToOriginalChat(jobId) {
-    const jobs = JSON.parse(state.files["automatic-jobs"]) as GenerationJob[];
+    const jobs = JSON.parse(
+      window.harness.snapshot().files["automatic-jobs"],
+    ) as GenerationJob[];
     const job = jobs.find((candidate) => candidate.id === jobId);
     if (!job) throw Error("Fixture job missing");
     job.source.chatId = "original-chat";
@@ -841,6 +881,7 @@ window.harness = {
 };
 save();
 const script = document.createElement("script");
+script.type = "module";
 // Vite ignores dist in its watcher; do not reuse a cached transform after a rebuild.
 script.src = "/dist/plugin.js?fixture=" + Date.now();
 document.body.append(script);

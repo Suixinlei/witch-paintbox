@@ -138,7 +138,7 @@ for (const mode of ["scene-objects-nested", "scene-objects-both"] as const) {
       expect(job.validationWarnings).toHaveLength(1);
       await page.reload();
       await expect(
-        page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+        page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
       ).toBeVisible();
       expect(
         (await snapshot(page)).calls.filter(
@@ -178,7 +178,7 @@ for (const mode of [
 async function load(page: Page) {
   await page.goto("/e2e/fixture/");
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
 }
 async function seed(
@@ -197,7 +197,7 @@ async function seed(
   }, options);
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
 }
 async function snapshot(page: Page) {
@@ -347,7 +347,7 @@ for (const mode of [
       const count = saved.submissions;
       await page.reload();
       await expect(
-        page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+        page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
       ).toBeVisible();
       expect((await snapshot(page)).submissions).toBe(count);
     },
@@ -498,7 +498,7 @@ test("旧外观整理和自动修正选项仍存在时也只调用一次", async
   await page.evaluate(() => window.harness.legacyOptions());
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
   await page.evaluate(() => window.harness.emit());
   await complete(page);
@@ -526,7 +526,7 @@ test("请求已发出但响应未保存时刷新，不自动再调用模型", as
   await page.evaluate(() => window.harness.mode("normal"));
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
   await history(page);
   await expect(page.locator(".preview .danger")).toContainText("未自动重发");
@@ -609,7 +609,7 @@ test("提示词与画风内置于插件，设置页不暴露且旧配置值不�
   );
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
   await page
     .getByRole("button", { name: "第二步 · 自动生图", exact: true })
@@ -701,7 +701,7 @@ test("第二步：缺资料时失败，不读世界书、不调用模型或提�
   await page.evaluate(() => window.harness.configure({ enabled: true }));
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
   await page.evaluate(() => window.harness.emit());
   await history(page);
@@ -760,7 +760,7 @@ test("第二步：预览不出图，自动队列持久化、只读资料、去�
   });
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
   await page.evaluate(() => window.harness.emit());
   await complete(page);
@@ -807,7 +807,7 @@ test("提交响应丢失后保持待确认，刷新和重复事件不会重复�
   ).toBeVisible();
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
   await page.evaluate(() => window.harness.emit());
   await history(page);
@@ -862,7 +862,7 @@ for (const mode of [
         expect(typeof job.raw).toBe("string");
       await page.reload();
       await expect(
-        page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+        page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
       ).toBeVisible();
       await page.evaluate(() => window.harness.emit());
       await history(page);
@@ -1084,7 +1084,7 @@ test("构图与出图两阶段流水线：上一张未返回时已整理下一�
   });
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
   await page.evaluate(() => {
     window.harness.emit(1);
@@ -1171,7 +1171,7 @@ test("已提交任务在刷新后继续查询，不重复调用模型或提交�
   await page.evaluate(() => window.harness.mode("normal"));
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "全局生图 · 两步流程" }),
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
   ).toBeVisible();
   await complete(page);
   const saved = await snapshot(page);

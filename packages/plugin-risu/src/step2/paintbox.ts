@@ -1,6 +1,7 @@
 import type { Illustration, Pair } from "../domain/types";
 import type { RisuApi } from "../host/api";
 import { illustrationPoints } from "./illustrations";
+import { SERVICE_VERSION } from "../../../plugin-sifang/src/service-protocol";
 
 export interface PaintboxConnection {
   url: string;
@@ -152,7 +153,7 @@ export function createPaintbox(
     const health = record(
       await (await request("health", null, 8000, checked)).json(),
     );
-    if (health.version !== 2 || !health.revision)
+    if (health.version !== SERVICE_VERSION || !health.revision)
       throw new Error("独立服务版本不匹配或尚未迁入配置");
     return checked;
   }

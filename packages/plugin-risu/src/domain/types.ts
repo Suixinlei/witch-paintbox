@@ -329,6 +329,8 @@ export interface GenerationJob extends ImageJob, PlanningJob {
   validationWarnings?: string[];
   responseKind?: string;
   attachmentState?: string;
+  awaitingClick?: boolean;
+  summaryAttached?: boolean;
   attachmentError?: string;
   attachedAt?: number;
   imageAssets?: string[];

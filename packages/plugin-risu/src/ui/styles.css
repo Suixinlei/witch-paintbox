@@ -1,6 +1,81 @@
 * {
   box-sizing: border-box;
 }
+
+body.service-ui {
+  background: #f6f1e8;
+  color: #342923;
+  color-scheme: light;
+}
+.service-ui header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  max-width: 1400px;
+  margin: auto;
+  border-color: #d5c9b8;
+}
+.service-ui header > h1 {
+  margin: 0;
+}
+.service-ui header > button {
+  grid-column: 2;
+  grid-row: 1;
+}
+.service-ui header > nav {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 3px;
+}
+.service-ui header > nav button {
+  flex: 0 0 auto;
+}
+.service-dashboard-link {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.service-ui main {
+  max-width: 1400px;
+  margin: auto;
+}
+.service-ui button {
+  background: #fffdf7;
+  color: #705334;
+  border-color: #cbbda8;
+}
+.service-ui button.active {
+  background: #705334;
+  color: #fffdf7;
+}
+.service-ui :is(input:not([type="checkbox"]), select, textarea) {
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #cbbda8;
+  border-radius: 6px;
+  background: #fffdf7;
+  color: #342923;
+}
+.service-ui :is(.muted, small) {
+  color: #7b7061;
+}
+.service-ui #status {
+  background: #eee6d8;
+}
+.service-ui [hidden] {
+  display: none !important;
+}
+.service-ui a {
+  color: #705334;
+}
+.service-ui pre {
+  background: #eee6d8;
+}
+
 body {
   margin: 0;
   background: #171b21;

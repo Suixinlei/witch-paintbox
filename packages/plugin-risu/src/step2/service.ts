@@ -17,6 +17,7 @@ import { createAttachments } from "./attachments";
 import { createWorker } from "./worker";
 import { createPreview } from "./preview";
 import { validateAutomatic } from "./validation";
+import { jobStorage, AutomaticJobsStorageError } from "./jobStorage";
 import {
   createPaintbox,
   imageDataUrl,
@@ -102,28 +103,47 @@ export function createGenerationService(deps: {
     const dropped = new Set(removable.map((job) => job.id));
     state.jobs = state.jobs.filter((job) => !dropped.has(job.id));
   }
+  let jobsRevision = 0;
+  let pendingSave: Promise<void> | undefined;
   function persistAutomaticJobs() {
-    const addedLibraries = rememberLibraries();
+    librariesPending = rememberLibraries() || librariesPending;
     pruneFinishedJobs();
     // Finished jobs share the revision snapshot file; storing it inside every
     // job made the queue file grow by ~30 KB per image.
-    const snapshot = state.jobs.map((job) => ({
-      ...job,
-      savedLibrary: { people: [], backgrounds: [] } as LibraryData,
-    }));
-    state.autoWrites = state.autoWrites
-      .catch(() => {})
-      .then(async () => {
-        if (addedLibraries || librariesPending) {
-          librariesPending = false;
-          await storage.write(
-            "automatic-libraries",
-            Object.fromEntries(librarySnapshots),
-          );
-        }
-        await storage.write("automatic-jobs", snapshot);
-      });
-    return state.autoWrites;
+    jobsRevision++;
+    if (!pendingSave) {
+      pendingSave = Promise.resolve()
+        .then(async () => {
+          let savedRevision: number;
+          do {
+            savedRevision = jobsRevision;
+            const snapshot = structuredClone(
+              state.jobs.map((job) => ({
+                ...job,
+                savedLibrary: { people: [], backgrounds: [] } as LibraryData,
+              })),
+            );
+            if (librariesPending) {
+              librariesPending = false;
+              try {
+                await storage.write(
+                  "automatic-libraries",
+                  Object.fromEntries(librarySnapshots),
+                );
+              } catch (error) {
+                librariesPending = true;
+                throw new AutomaticJobsStorageError(error);
+              }
+            }
+            await jobStorage(storage).write(snapshot);
+          } while (savedRevision !== jobsRevision);
+        })
+        .finally(() => {
+          pendingSave = undefined;
+        });
+      state.autoWrites = pendingSave;
+    }
+    return pendingSave;
   }
   async function publishMessageImageStatus(job: GenerationJob) {
     if (
@@ -143,7 +163,8 @@ export function createGenerationService(deps: {
           : !other.replaceReplyImages && other.eventKey === job.eventKey),
     );
     const isPending = (job: GenerationJob) =>
-      [
+      !job.awaitingClick &&
+      ([
         "pending",
         "preparing",
         "ready",
@@ -151,9 +172,9 @@ export function createGenerationService(deps: {
         "queued",
         "waiting",
       ].includes(job.state) ||
-      (job.state === "complete" &&
-        !job.noIllustrations &&
-        !["attached", "error"].includes(job.attachmentState ?? ""));
+        (job.state === "complete" &&
+          !job.noIllustrations &&
+          !["attached", "error"].includes(job.attachmentState ?? "")));
     const failure = [job, ...siblings].find(
       (item) =>
         item.state === "error" ||
@@ -178,9 +199,11 @@ export function createGenerationService(deps: {
         ? "正在准备或生成配图"
         : failure?.error ||
           failure?.attachmentError ||
-          (job.noIllustrations
-            ? "本楼未选取配图"
-            : statusLabel[job.state] || job.state),
+          (job.awaitingClick
+            ? "配图概括已就绪，点击生图后生成图片"
+            : job.noIllustrations
+              ? "本楼未选取配图"
+              : statusLabel[job.state] || job.state),
     });
   }
   async function markAuto(job: GenerationJob, patch: Partial<GenerationJob>) {
@@ -220,6 +243,14 @@ export function createGenerationService(deps: {
     let changed = false;
     for (const job of state.jobs) {
       if (
+        job.settings.execution === "paintbox" &&
+        !job.manual &&
+        job.state === "ready"
+      ) {
+        job.awaitingClick = true;
+        changed = true;
+      }
+      if (
         !job.settings.planningModel &&
         job.settings.execution !== "paintbox" &&
         !["complete", "error"].includes(job.state)
@@ -245,7 +276,24 @@ export function createGenerationService(deps: {
         changed = true;
       }
     }
-    if (changed) await persistAutomaticJobs();
+    if (changed) {
+      try {
+        await persistAutomaticJobs();
+      } catch (error) {
+        runtime.status = "魔女画匣任务恢复暂缓：" + errorText(error);
+        runtime.notify(false);
+        return;
+      }
+    }
+    for (const job of state.jobs.filter(
+      (job) => job.awaitingClick && !job.summaryAttached && job.illustration,
+    )) {
+      try {
+        await attachments.attachPlannedSummaries([job]);
+      } catch (error) {
+        runtime.status = errorText(error);
+      }
+    }
     for (const job of state.jobs.filter((job) =>
       [
         "pending",

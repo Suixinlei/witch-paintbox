@@ -22,6 +22,7 @@ import type { Storage } from "../shared/storage";
 import type { Runtime } from "../shared/events";
 import { PREFIX, errorText } from "../shared/text";
 import type { PaintboxConnection } from "../step2/paintbox";
+import { jobStorage } from "../step2/jobStorage";
 
 const manualDefaults: ManualSettings = {
   url: "http://127.0.0.1:8188",
@@ -153,7 +154,7 @@ export async function loadState(
     settings,
     jobs: await restoreLibraries(
       storage,
-      (await storage.read<GenerationJob[]>("automatic-jobs")) || [],
+      await jobStorage(storage).read(),
     ),
     history,
     working: false,

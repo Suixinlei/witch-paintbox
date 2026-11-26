@@ -84,7 +84,7 @@ export async function bootstrap(api: RisuApi) {
   try {
     registrations.push(
       await api.registerSetting(
-        legacy ? "全局生图 · 两步流程" : "全局生图 · 服务连接",
+        legacy ? "魔女画匣 · 两步流程" : "魔女画匣 · 服务连接",
         () => show(legacy ? "automatic" : "connection"),
         "🎨",
         "html",
@@ -110,7 +110,7 @@ export async function bootstrap(api: RisuApi) {
     await api.onUnload(async () => {
       runtime.disposed = true;
       unsubscribe();
-      ui.destroy();
+      await ui.destroy();
       await api.removeRisuChatListener("output", generation.onAssistantOutput);
       for (const item of registrations) await api.unregisterUIPart(item.id);
       await states.generation.enqueueWrites.catch(() => {});
@@ -122,7 +122,7 @@ export async function bootstrap(api: RisuApi) {
   } catch (error) {
     runtime.disposed = true;
     unsubscribe();
-    ui.destroy();
+    await ui.destroy();
     for (const item of registrations) await api.unregisterUIPart(item.id);
     throw error;
   }

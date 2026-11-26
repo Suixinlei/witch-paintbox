@@ -23,6 +23,7 @@ import { illustrationLore } from "./illustrationLore";
 import { illustrationPoints } from "./illustrations";
 import { novelAINegative, novelAIPreset } from "../shared/novelAIPreset";
 import { imageDataUrl, type Paintbox } from "./paintbox";
+import { AutomaticJobsStorageError } from "./jobStorage";
 export function createWorker(deps: {
   api: Pick<RisuApi, "generateNovelAIImage">;
   storage: Storage;
@@ -119,9 +120,7 @@ export function createWorker(deps: {
       job.pair,
       job.settings.maxInputChars,
       job.settings.maxIllustrations ?? 3,
-      {
-        ...remoteSource(job),
-      },
+      undefined,
       { cardId: job.source.characterId, automatic: !job.manual },
     );
     if (runtime.disposed) return;
@@ -144,38 +143,19 @@ export function createWorker(deps: {
         illustration,
         prompt: illustration.prompt,
         serviceScene: true,
+        awaitingClick: true,
+        summaryAttached: false,
+        state: "ready",
+        files: [],
         modelRequestState: "complete",
         modelCallCount: order ? 0 : 1,
       }),
     );
-    for (const [order, picture] of pictures.entries()) {
-      const target = siblings[order];
-      Object.assign(
-        target,
-        picture.image
-          ? await serviceImagePatch(target, {
-              image: picture.image,
-              error: picture.error,
-            })
-          : { state: "error", error: picture.error },
-      );
-    }
     Object.assign(job, siblings[0]);
     state.jobs.splice(state.jobs.indexOf(job) + 1, 0, ...siblings.slice(1));
     await persistAutomaticJobs();
+    await deps.attachments.attachPlannedSummaries([job, ...siblings.slice(1)]);
     await publishMessageImageStatus(job);
-    if (job.replaceReplyImages) {
-      const bytes = new Map<string, Uint8Array<ArrayBuffer>>();
-      for (const [order, picture] of pictures.entries())
-        if (picture.image) bytes.set(siblings[order].id, picture.image.bytes);
-      await attachAutomaticImages(job, bytes);
-      return;
-    }
-    for (const [order, picture] of pictures.entries()) {
-      const target = order ? siblings[order] : job;
-      if (picture.image)
-        await attachAutomaticImages(target, picture.image.bytes);
-    }
   }
 
   async function executeNovelAI(job: GenerationJob, prompt: string) {
@@ -268,14 +248,15 @@ export function createWorker(deps: {
     });
   }
   const isActive = (job: GenerationJob) =>
-    [
-      "pending",
-      "preparing",
-      "ready",
-      "submitting",
-      "queued",
-      "waiting",
-    ].includes(job.state) ||
+    (!job.awaitingClick &&
+      [
+        "pending",
+        "preparing",
+        "ready",
+        "submitting",
+        "queued",
+        "waiting",
+      ].includes(job.state)) ||
     state.inlineWorking.has(job.illustrationBatch ?? job.id) ||
     state.inlineWorking.has(job.id);
   const needsCompose = (j: GenerationJob) =>
@@ -285,6 +266,8 @@ export function createWorker(deps: {
   const needsPaint = (j: GenerationJob) =>
     !j.supersededBy &&
     j.state === "ready" &&
+    !j.awaitingClick &&
+    (j.settings.execution === "legacy" || j.manual) &&
     !!text(j.prompt) &&
     !!j.illustration &&
     (state.settings.enabled || j.manual);
@@ -306,6 +289,7 @@ export function createWorker(deps: {
           await composeAutomatic(job);
           void drainPainter();
         } catch (e) {
+          if (e instanceof AutomaticJobsStorageError) throw e;
           await markAuto(job, { state: "error", error: errorText(e) });
         }
         autoPaint();
@@ -332,6 +316,7 @@ export function createWorker(deps: {
         try {
           await executeNovelAI(job, job.prompt!);
         } catch (e) {
+          if (e instanceof AutomaticJobsStorageError) throw e;
           await markAuto(job, { state: "error", error: errorText(e) });
         }
         runtime.status =
@@ -478,6 +463,8 @@ export function createWorker(deps: {
             createdAt: Date.now(),
             state: "ready",
             manual: true,
+            awaitingClick: false,
+            summaryAttached: false,
             retryOf: matchingImage.id,
             replacesImageId: captured.imageId,
             replaceReplyImages: undefined,
@@ -506,6 +493,10 @@ export function createWorker(deps: {
           );
           if (saved.length) {
             for (const job of saved) {
+              if (job.awaitingClick) {
+                await deps.attachments.attachPlannedSummaries([job]);
+                continue;
+              }
               if (
                 job.state === "complete" &&
                 job.attachmentState !== "attached"

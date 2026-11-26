@@ -72,6 +72,14 @@ function legacySettings(
 export function renderGeneration(main: HTMLElement, services: UiServices) {
   const { generation } = services;
   const { state } = generation;
+  if (state.settings.execution !== "legacy") {
+    el("h2", "配图概括与生图", main);
+    el(
+      "p",
+      "模型、画师词、画幅和配图上限使用服务端配置。回复完成后准备配图概括；在聊天中点击各条「生图」生成所选图片。角色卡、模型、画师和自动配图设置统一在服务管理台配置。",
+      main,
+    );
+  }
   if (state.settings.execution === "legacy") {
     legacySettings(main, services);
     button(main, "切换到魔女画匣独立服务", () =>
@@ -90,7 +98,9 @@ export function renderGeneration(main: HTMLElement, services: UiServices) {
   );
   button(
     main,
-    "补生当前最新已完成回复（去重）",
+    state.settings.execution === "legacy"
+      ? "补生当前最新已完成回复（去重）"
+      : "为最新已完成回复准备配图概括（去重）",
     generation.recoverLatestOutput,
     state.busy || state.working,
   );
@@ -149,7 +159,12 @@ export function renderConnection(
       }),
     state.working,
   );
-  const link = el("a", "打开服务配置页", main);
+  el(
+    "p",
+    "角色卡、服装、模型、画师、Prompt 和配图工作流均在服务管理台设置。",
+    main,
+  );
+  const link = el("a", "打开服务管理台", main);
   link.href = connection?.url ?? "http://127.0.0.1:4783";
   link.target = "_blank";
   link.rel = "noopener noreferrer";
