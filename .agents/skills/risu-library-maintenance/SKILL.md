@@ -34,7 +34,7 @@ node /mnt/d/Projects/witch-paintbox/.agents/skills/risu-library-maintenance/scri
 
 - 固定外貌写 `appearance`；衣着、配饰写 `outfits[].tags`；武器、表情、动作、背景留给当轮提示词或场景资料。
 - **版权同人角色**（碧蓝航线／NIKKE／鸣潮等外来角色）`appearance` 直接写 Danbooru 角色标签（如 `belfast_(azur_lane), azur_lane`），不要手写展开外貌——角色标签对 NAI 最稳、最省事；**原创角色**才写发色眼色体型等完整外貌。标签用 Danbooru 规范名（别名可自动解析，如 `tsukatsuki_rio` 实为 `rio_(blue_archive)`），拿不准先查角色页确认。
-- 角色字段与四方一致：`id/name/aliases/appearance/negative/outfits/selectedOutfitId/portrait/updatedAt`；服装字段是 `id/name/tags`。旧 `people/description/defaultOutfitId` 已由服务迁移，不再生成旧格式。
+- 角色字段与四方一致：`id/name/aliases/appearance/negative/outfits/selectedOutfitId/portrait/updatedAt`；服装字段是 `id/name/tags`。本工具要求服务已完成从旧 `people/description/defaultOutfitId` 到 anchors 的迁移；当前本机实例已验证支持。遇到旧结构时停止并说明版本要求，不在维护脚本里私自迁移或生成旧格式。
 - 本卡允许原有韩文、英文姓名；不要套用全局四方库的中文命名限制改掉原卡姓名。别名保持本卡无歧义。缺少的外貌特征不要伪称原卡设定；用户授权设计时说明是新增设计。
 - `show` 返回 `revision`。操作文件用该版本，脚本默认预览；任务授权的修改可直接加 `--apply`，不另设一轮通用批准。409 时重新读、重新比较，不自动重放旧草稿。
 - 未同步的卡可执行 `library.mjs sync-card <card-source.json> --apply`：只创建空人物/场景库，或同步白名单卡片元数据；不自动生成标签。已有的人物库、场景库和画师绑定原样保留。仅在用户要求创建服务卡片或同步原卡设定时执行。

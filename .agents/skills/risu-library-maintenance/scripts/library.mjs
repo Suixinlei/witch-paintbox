@@ -34,7 +34,11 @@ async function request(path, body) {
   if (!response.ok) throw Object.assign(new Error(value.error || `HTTP ${response.status}`), { status: response.status });
   return value;
 }
-const readCard = id => request('admin/risu/card', { id, withRevision: true });
+const readCard = async id => {
+  const result = await request('admin/risu/card', { id, withRevision: true });
+  assert(Array.isArray(result.entry?.library?.anchors), 'This tool requires the anchors library schema; update the service migration before editing legacy people data');
+  return result;
+};
 const compact = entry => ({ cardId: entry.card.chaId, name: entry.card.name,
   anchors: entry.library.anchors.map(anchor => ({ id: anchor.id, name: anchor.name,
     outfits: anchor.outfits.map(outfit => ({ id: outfit.id, name: outfit.name })),
