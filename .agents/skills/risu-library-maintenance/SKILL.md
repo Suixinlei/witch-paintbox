@@ -58,7 +58,7 @@ node /mnt/d/Projects/witch-paintbox/.agents/skills/risu-library-maintenance/scri
 node /mnt/d/Projects/witch-paintbox/.agents/skills/risu-library-maintenance/scripts/library.mjs apply '/mnt/d/Projects/witch-paintbox/.local/card-ops.json' --apply
 ```
 
-新增人物必须提供 name/appearance，默认其余字段为空且生成 updatedAt。人物与服装均使用 ID 定位。另支持 `remove-character {id}`、`remove-outfit {characterId,id}`、`set-portrait {characterId,file}`、`clear-portrait {characterId}`。默认服装设为 `outfitId:""` 表示只用固定外貌；删除默认服装后也清空选择。角色图仅 PNG/JPEG/WebP，≤10 MiB，使用文件路径，不把 base64 写进操作文件或对话。
+新增人物必须提供 name/appearance，默认其余字段为空且生成 updatedAt。人物与服装均使用 ID 定位。另支持 `remove-character {id}`、`remove-outfit {characterId,id}`、`set-portrait {characterId,file}`、`clear-portrait {characterId}`。默认服装设为 `outfitId:""` 表示只用固定外貌；删除默认服装后也清空选择。角色图仅 PNG/JPEG/WebP，≤10 MiB，使用文件路径，不把 base64 写进操作文件或对话。注意 `show` 返回的锚点已剥掉 `portrait` 原字段，判断人设图用 `hasPortrait` 布尔值——`set-portrait` 成功后别按 portrait 字段误判失败。
 
 脚本只提交这一张卡，保留完整元数据、场景、画师绑定和未修改字段。实际提交前备份到 `/mnt/d/Projects/witch-paintbox/.local/risu-library-backups/`，返回保存后的 revision，并复读验证。网络结果不确定时先读服务状态，不自动重试；提交成功后发现并发修改时也不自动回滚。
 
