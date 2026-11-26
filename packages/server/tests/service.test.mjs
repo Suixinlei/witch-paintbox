@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,8 +18,36 @@ import { requestServiceModel } from '@witch-paintbox/plugin-sifang/runtime/model
 import { applyImageInsertions, createImageInsertionPlan } from '@witch-paintbox/plugin-sifang/runtime/image-insertion.js';
 import { parseImageMarkers } from '@witch-paintbox/plugin-sifang/runtime/image-markers.js';
 import { prepareImagePrompt } from '@witch-paintbox/plugin-sifang/runtime/image-prompt.js';
+import { drawNovelAI } from '@witch-paintbox/plugin-sifang/runtime/novelai-draw.js';
+import { imagePlanningInput } from '@witch-paintbox/plugin-sifang/runtime/image-planning.js';
+import { setServiceRasterDecoder } from '@witch-paintbox/plugin-sifang/runtime/raster-image.js';
 import { PACKET_TYPE, packet, unpack } from '@witch-paintbox/plugin-sifang/runtime/service-protocol.js';
-import { risuLibrary } from '../risu.mjs';
+import { openRisuConfig, risuDefaults, risuLibrary } from '../risu.mjs';
+
+test('Risu migrates old character outfits once, backs up the original and preserves card isolation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'paintbox-risu-migration-'));
+  try {
+    const original = JSON.stringify({ revision: 'old', preferences: risuDefaults, cards: ['one', 'two'].map(id => ({
+      card: { chaId: id, name: id }, library: { people: [{ id: 'actor', name: '角色', appearance: id,
+        negative: 'blur', aliases: ['别名'], defaultOutfitId: 'daily', outfits: [{ id: 'daily', name: '日常装', description: 'dress' }] }],
+        backgrounds: [{ name: '庭院', description: 'garden' }] },
+    })) });
+    await writeFile(join(directory, 'risu.json'), original);
+    const migrated = await openRisuConfig(directory);
+    const anchor = migrated.card('one').library.anchors[0];
+    assert.equal(anchor.selectedOutfitId, 'daily');
+    assert.equal(anchor.outfits[0].tags, 'dress');
+    assert.equal(anchor.negative, 'blur');
+    assert.ok(anchor.aliases.includes('别名'));
+    assert.equal(migrated.card('two').library.anchors[0].appearance, 'two');
+    assert.equal(migrated.card('one').library.people, undefined);
+    const backups = (await readdir(directory)).filter(name => name.startsWith('risu.before-anchors-'));
+    assert.equal(backups.length, 1);
+    assert.equal(await readFile(join(directory, backups[0]), 'utf8'), original);
+    await openRisuConfig(directory);
+    assert.equal((await readdir(directory)).filter(name => name.startsWith('risu.before-anchors-')).length, 1);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 test('Risu planning output keeps environmental tags global and expands unambiguous short names', async () => {
   const { anchors } = risuLibrary({ card: {}, library: { people: [
@@ -30,6 +58,52 @@ test('Risu planning output keeps environmental tags global and expands unambiguo
   const prepared = await prepareImagePrompt(scene, '', 'watercolor', 22, { anchors, outfits: [] });
   assert.equal(prepared.positive, 'watercolor, 1boy, 1girl, garden, moonlight');
   assert.deepEqual(prepared.characters.map(character => character.positive), ['white hair, holding a lantern', 'black hair, walking']);
+});
+
+test('composition coordinates stay bound to appearance and negative fields through NAI model conversion', async () => {
+  setServiceRasterDecoder(async blob => {
+    const { width, height } = await sharp(Buffer.from(await blob.arrayBuffer())).metadata();
+    return { width, height };
+  });
+  const library = { anchors: [
+    { id: 'a', name: '银发', aliases: [], appearance: 'silver hair', negative: 'black hair', outfits: [], selectedOutfitId: '' },
+    { id: 'b', name: '黑发', aliases: [], appearance: 'black hair', negative: '', outfits: [], selectedOutfitId: '' },
+  ], outfits: [] };
+  const scene = '2girls, garden | @position(0.26,0.48) @银发, sitting on the left ~ red eyes | @position(0.74,0.52) @黑发, standing on the right';
+  const prompt = await prepareImagePrompt(scene, 'blur', 'watercolor', 22, library);
+  assert.equal(prompt.characters[0].positive, 'silver hair, sitting on the left');
+  assert.equal(prompt.characters[0].negative, 'red eyes, black hair');
+  assert.doesNotMatch(JSON.stringify(prompt), /@position/);
+  const jpeg = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#aa5c72' } }).jpeg().toBuffer();
+  for (const model of ['nai-diffusion-5-full', 'nai-diffusion-4-5-full', 'nai-diffusion-4-full']) {
+    const settings = defaultAllImageSettings().profiles.novelai;
+    settings.connection.key = 'fixture-key';
+    settings.parameters.model = model;
+    let request;
+    const result = await drawNovelAI(settings, prompt, new AbortController().signal, undefined,
+      { state: { items: [], normalize: false } }, async (_url, options) => {
+        request = JSON.parse(options.body);
+        return new Response(jpeg, { headers: { 'Content-Type': 'image/jpeg' } });
+      });
+    const centers = model.startsWith('nai-diffusion-5') ? [{ x: 0.26, y: 0.48 }, { x: 0.74, y: 0.52 }]
+      : [{ x: 0.3, y: 0.5 }, { x: 0.7, y: 0.5 }];
+    assert.equal(request.parameters.use_coords, true);
+    assert.equal(request.parameters.v4_prompt.use_coords, true);
+    assert.deepEqual(request.parameters.v4_prompt.caption.char_captions.map(item => item.centers[0]), centers);
+    assert.deepEqual(request.parameters.v4_negative_prompt.caption.char_captions.map(item => item.centers[0]), centers);
+    assert.deepEqual(request.parameters.characterPrompts.map(item => item.center), centers);
+    assert.deepEqual(result.characters.map(item => item.center), centers);
+    assert.equal(request.parameters.characterPrompts[0].uc, 'red eyes, black hair');
+  }
+  const legacy = await prepareImagePrompt('2girls | silver hair | black hair', '', '', 22, library);
+  assert.ok(legacy.characters.every(character => character.center === undefined));
+  for (const position of ['(1.2,0.5)', '(NaN,0.5)', '(0.5,-1)']) {
+    await assert.rejects(prepareImagePrompt(`garden | @position${position} @银发`, '', '', 22, library), /角色位置无效/);
+  }
+  const plan = createImageInsertionPlan('两人在花园里。', []);
+  assert.match(imagePlanningInput(plan), /@position\(x,y\)/);
+  assert.match(imagePlanningInput(plan, [{ pointIds: [plan.points[0].id] }]), /@position\(x,y\)/);
+  assert.doesNotMatch(imagePlanningInput(plan, undefined, false), /@position/);
 });
 
 test('reserved 无服装 works as a shared-outfit token while unknown names fall back to the default', async () => {
@@ -212,6 +286,7 @@ test('standalone service plans once, returns a binary image once and keeps histo
     assert.doesNotMatch(calls[0].body.messages[0].content, /UNMATCHED_OCEAN_LIGHTING/);
     assert.match(calls[0].body.messages.at(-1).content, /blue coat/);
     assert.match(calls[0].body.messages.at(-1).content, /Return only the requested JSON\./);
+    assert.match(calls[0].body.messages.map(message => message.content).join('\n'), /@position\(x,y\)/);
 
     const markerKey = JSON.stringify(['scope', 'chat', 'floor', parseImageMarkers(result.text)[0].raw, 1, 0]);
     const response = await send('images', {
@@ -222,6 +297,7 @@ test('standalone service plans once, returns a binary image once and keeps histo
     const image = await unpack(await response.blob());
     assert.equal(image.value.history.id, 'finished');
     assert.equal(image.value.history.error, undefined);
+    assert.equal(image.value.copyPrompt, 'blue coat, moonlit courtyard');
     assert.equal(image.value.parameters.width, settings.parameters.width);
     assert.equal(image.blobs[0].type, 'image/jpeg');
     assert.deepEqual(Buffer.from(await image.blobs[0].arrayBuffer()), jpeg);
@@ -280,8 +356,15 @@ test('standalone service plans once, returns a binary image once and keeps histo
     assert.equal((await send('plan', { original, excludedTags: [], draw: { scope: 'scope' } }, risu)).status, 400);
     const limited = await send('plan', { original, excludedTags: [], maxImages: 1,
       draw: { scope: 'risu:actor', chatId: 'chat', historyId: 'risu-floor', delay: 0 } }, risu);
-    assert.equal(limited.status, 422);
-    assert.equal(calls.length, 13, 'invalid image count never starts an upstream draw');
+    assert.equal(limited.status, 200);
+    const limitedBatch = await unpack(await limited.blob());
+    assert.equal(limitedBatch.value.added.length, 1);
+    assert.equal(limitedBatch.value.pictures.length, 1);
+    assert.equal(limitedBatch.blobs.length, 1);
+    assert.equal(parseImageMarkers(limitedBatch.value.text).length, 1);
+    assert.equal(limitedBatch.value.added[0].summary, '庭院');
+    assert.match(limitedBatch.value.warnings[0], /保留前 1 张/);
+    assert.equal(calls.length, 14, 'only the retained illustration starts an upstream draw');
     secondPrompt = 'still lake';
     const risuBatch = await unpack(await (await send('plan', { original, excludedTags: [], maxImages: 2,
       draw: { scope: 'risu:actor', chatId: 'chat', historyId: 'risu-floor', delay: 0 } }, risu)).blob());
@@ -325,7 +408,7 @@ test('standalone service plans once, returns a binary image once and keeps histo
     assert.equal((await send('history/marker', { markerKeys: [], latest: true })).status, 400);
     assert.equal((await send('history/marker', { markerKeys: [markerKey, markerKey], latest: true })).status, 400);
     assert.equal((await send('history/marker', { markerKeys: Array.from({ length: 65 }, () => markerKey + 'x'), latest: true })).status, 400);
-    assert.equal(calls.length, 16);
+    assert.equal(calls.length, 17);
     assert.ok(drawIntervals.every(ms => ms >= DRAW_INTERVAL_MS - 40), 'all image starts follow the cooldown');
     finishedDrawAt = undefined;
 
@@ -357,7 +440,11 @@ test('standalone service plans once, returns a binary image once and keeps histo
     assert.deepEqual(await (await send('risu/preferences', undefined, risu)).json(), preferences);
     const request = cardId => ({ original, excludedTags: [], maxImages: 6, risu: { cardId, automatic: true },
       draw: { scope: `risu:${cardId}`, chatId: 'chat', historyId: 'scoped-floor', delay: 0 } });
-    assert.equal((await send('plan', request('card-0'), risu)).status, 422, 'the service caps the requested image count');
+    const capped = await send('plan', request('card-0'), risu);
+    assert.equal(capped.status, 200);
+    const cappedBatch = await unpack(await capped.blob());
+    assert.equal(cappedBatch.value.added.length, 1, 'the service caps the requested image count without rejecting valid plans');
+    assert.equal(cappedBatch.blobs.length, 1);
     plansTwo = false;
     for (const [index, record] of records.entries()) {
       const start = calls.length;
@@ -394,20 +481,25 @@ test('standalone service plans once, returns a binary image once and keeps histo
     await stop();
     await start();
     assert.deepEqual(await (await send('risu/preferences', undefined, risu)).json(), preferences);
-    assert.deepEqual(await (await send('admin/risu/card', { id: 'card-1' })).json(), records[1]);
+    const migratedRecord = { ...records[1], library: { backgrounds: [], anchors: risuLibrary(records[1]).anchors } };
+    assert.deepEqual(await (await send('admin/risu/card', { id: 'card-1' })).json(), migratedRecord);
     const cardDraft = await (await send('admin/risu/card', { id: 'card-1', withRevision: true })).json();
-    assert.deepEqual(cardDraft.entry, records[1]);
+    assert.deepEqual(cardDraft.entry, migratedRecord);
     assert.equal(cardDraft.revision, (await (await send('admin/risu')).json()).revision);
     const changedCard = { ...cardDraft.entry, card: { ...cardDraft.entry.card, scenario: 'Only this card changes.' },
       artistPresetIds: { novelai: 'oil' } };
     assert.equal((await send('admin/risu/cards', { revision: cardDraft.revision, cards: [changedCard] })).status, 200);
     assert.equal((await send('admin/risu/cards', { revision: cardDraft.revision, cards: [cardDraft.entry] })).status, 409);
     assert.deepEqual(await (await send('admin/risu/card', { id: 'card-1' })).json(), changedCard);
-    assert.deepEqual(await (await send('admin/risu/card', { id: 'card-0' })).json(), records[0]);
+    assert.deepEqual(await (await send('admin/risu/card', { id: 'card-0' })).json(), {
+      ...records[0], library: { backgrounds: [], anchors: risuLibrary(records[0]).anchors },
+    });
     assert.deepEqual(await (await send('risu/preferences', undefined, risu)).json(), preferences);
     const drawCard = (id, drawId) => send('images', { input: { scene: 'moonlit courtyard' },
       history: { id: drawId, markerKey: JSON.stringify([`risu:${id}`, 'chat', drawId]), title: '庭院' } }, risu);
-    assert.equal((await drawCard('card-1', 'oil-draw')).status, 200);
+    const oilDraw = await drawCard('card-1', 'oil-draw');
+    assert.equal(oilDraw.status, 200);
+    assert.equal((await unpack(await oilDraw.blob())).value.copyPrompt, 'moonlit courtyard');
     assert.equal(calls.at(-1).body.input, 'thick oil paint, moonlit courtyard');
 
     settings.artists = [{ ...settings.artists[0], positive: 'updated ink wash' }];
@@ -416,6 +508,23 @@ test('standalone service plans once, returns a binary image once and keeps histo
     assert.equal(calls.at(-1).body.input, 'updated ink wash, moonlit courtyard');
     assert.equal((await drawCard('card-1', 'deleted-oil-draw')).status, 200);
     assert.equal(calls.at(-1).body.input, 'global brushwork, moonlit courtyard');
+
+    const positioned = await send('images', { input: { scene: '2girls, garden | @position(0.3,0.5) girl, silver hair ~ black hair | @position(0.7,0.5) girl, black hair' },
+      history: { id: 'positioned', markerKey: JSON.stringify(['scope', 'positions', 'floor']), title: '双人站位' } });
+    assert.equal(positioned.status, 200);
+    const coordinates = [{ x: 0.3, y: 0.5 }, { x: 0.7, y: 0.5 }];
+    assert.deepEqual((await unpack(await positioned.blob())).value.characters.map(character => character.center), coordinates);
+    assert.equal(calls.at(-1).body.parameters.use_coords, true);
+    assert.deepEqual(calls.at(-1).body.parameters.characterPrompts.map(character => character.center), coordinates);
+    const beforeInvalid = calls.length;
+    assert.equal((await send('images', { input: { prompt: { positive: '2girls', negative: '', characters: [
+      { positive: 'silver hair', negative: '', center: { x: 2, y: 0.5 } },
+    ] } } })).status, 400);
+    assert.equal(calls.length, beforeInvalid, 'bad coordinates never reach the paid endpoint');
+    await stop();
+    await start();
+    const savedPositions = await unpack(await (await send('history/image', { id: 'positioned' })).blob());
+    assert.deepEqual(savedPositions.value.entries[0].characters.map(character => character.center), coordinates);
   } finally {
     await stop();
     await new Promise(resolve => upstream.close(resolve));
@@ -466,7 +575,7 @@ test('DeepSeek JSON output requests an object and preserves insertion validation
   assert.match(request.messages.at(-1).content, /JSON 对象.*images/);
   assert.equal(validateAllModelSettings(settings).api.jsonOutput, true);
   assert.deepEqual(applyImageInsertions(plan, answer), applyImageInsertions(plan, JSON.stringify(rows)));
-  assert.throws(() => applyImageInsertions(plan, JSON.stringify({ images: rows, text: '改写' })), /images/);
+  assert.deepEqual(applyImageInsertions(plan, JSON.stringify({ images: rows, text: '改写' })), applyImageInsertions(plan, JSON.stringify(rows)), 'extra model metadata cannot rewrite the original text');
   assert.throws(() => applyImageInsertions(plan, '{"images":{} }'), /images/);
   await requestServiceModel({ ...settings, url: 'https://compatible.example.test' }, messages, signal);
   assert.equal(request.response_format, undefined);

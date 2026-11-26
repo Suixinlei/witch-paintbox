@@ -13,7 +13,7 @@ const recordFile = /^[a-f0-9]{64}\.wp$/;
 const compare = (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id);
 const digest = value => createHash('sha256').update(value).digest('hex');
 
-export async function openLibrary(directory) {
+export async function openLibrary(directory, resolveCopyPrompt = async () => undefined) {
   const images = join(directory, 'images');
   const vibes = join(directory, 'vibes');
   await Promise.all([mkdir(images, { recursive: true, mode: 0o700 }), mkdir(vibes, { recursive: true, mode: 0o700 })]);
@@ -66,7 +66,8 @@ export async function openLibrary(directory) {
         if (stored.length !== 1) continue;
         // Keep this result valid if another request deletes the local file while it is sent.
         blobs.push(new Blob([await stored[0].arrayBuffer()], { type: stored[0].type }));
-        output.push(entry);
+        const copyPrompt = entry.copyPrompt ?? await resolveCopyPrompt(entry);
+        output.push({ ...entry, ...(copyPrompt === undefined ? {} : { copyPrompt }) });
       } catch (error) {
         if (error.code !== 'ENOENT') throw error;
       }

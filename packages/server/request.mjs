@@ -81,8 +81,8 @@ export async function readBody(req, max, type) {
   return new Blob(parts, { type });
 }
 
-export async function readJson(req) {
-  const body = await readBody(req, 8 * 1024 * 1024, 'application/json');
+export async function readJson(req, limit = 8 * 1024 * 1024) {
+  const body = await readBody(req, limit, 'application/json');
   try {
     const result = JSON.parse(await body.text());
     if (object(result)) return result;

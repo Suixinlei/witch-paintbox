@@ -62,7 +62,8 @@ try {
     });
   });
   browser = await chromium.launch({ executablePath: process.env.WITCH_CHROMIUM });
-  const admin = await browser.newPage({ reducedMotion: 'reduce' });
+  const adminContext = await browser.newContext({ reducedMotion: 'reduce' });
+  const admin = await adminContext.newPage();
   await admin.goto(service);
   await admin.locator('#token').fill(token);
   await admin.getByRole('button', { name: '进入管理' }).click();
@@ -99,6 +100,25 @@ try {
   await admin.reload();
   await admin.locator('#dashboard').waitFor();
   await admin.locator('#auth').waitFor({ state: 'hidden' });
+  await admin.locator('#live-connection').getByText('在线 · 接收请求').waitFor();
+  // A single failed heartbeat is a delayed update, not proof of a lost connection.
+  let statusFailures = 0;
+  const statusRoute = '**/v1/admin/status';
+  await admin.route(statusRoute, route => {
+    statusFailures++;
+    return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'fixture unavailable' }) });
+  });
+  await admin.locator('#live-connection').getByText('状态更新延迟 · 正在重试').waitFor();
+  assert.ok(statusFailures < 3);
+  await admin.locator('#live-connection').getByText('连接中断 · 正在重连').waitFor();
+  assert.ok(statusFailures >= 3);
+  assert.match(await admin.locator('#live-check').textContent(), /fixture unavailable/);
+  await admin.unroute(statusRoute);
+  await admin.locator('#live-connection').getByText('在线 · 接收请求').waitFor();
+  // Recovery resets the failure streak.
+  await admin.route(statusRoute, route => route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }));
+  await admin.locator('#live-connection').getByText('状态更新延迟 · 正在重试').waitFor();
+  await admin.unroute(statusRoute);
   await admin.locator('#live-connection').getByText('在线 · 接收请求').waitFor();
   assert.equal(new URL(admin.url()).hash, '#image');
   await navigate('model');
@@ -179,6 +199,56 @@ try {
   await prompt.waitFor();
   assert.equal(await prompt.inputValue(), 'Unsaved prompt draft');
   await prompt.fill('Choose one marked position.');
+  const cardPage = await admin.context().newPage();
+  await cardPage.goto(service + '/#cards');
+  await cardPage.locator('#token').fill(token);
+  await cardPage.getByRole('button', { name: '进入管理' }).click();
+  await cardPage.locator('#card-form').waitFor();
+  await cardPage.reload();
+  await cardPage.locator('#card-form').waitFor().catch(async error => {
+    throw new Error(JSON.stringify(await cardPage.evaluate(() => ({
+      selected: document.getElementById('risu-card').value,
+      remembered: localStorage.getItem('witch-paintbox.admin-card'),
+      status: document.getElementById('card-status').textContent,
+    }))), { cause: error });
+  });
+  assert.equal(await cardPage.locator('#risu-card').inputValue(), 'fixture-card');
+  assert.equal(await cardPage.locator('[name="cardName"]').inputValue(), '测试卡');
+  await cardPage.evaluate(async base64 => {
+    const { mountRisuCardAnchors } = await import('/dist/risu-card-editor.js');
+    const root = document.createElement('div');
+    root.id = 'portrait-fixture';
+    document.body.append(root);
+    const anchors = [{ id: 'portrait-anchor', name: '预览角色', aliases: [], appearance: 'portrait', negative: '',
+      outfits: [], selectedOutfitId: '', portrait: 'data:image/jpeg;base64,' + base64, updatedAt: Date.now() }];
+    window.removePortraitFixture = mountRisuCardAnchors(root, () => anchors, async () => {});
+  }, photo.toString('base64'));
+  const portraitFixture = cardPage.locator('#portrait-fixture');
+  await portraitFixture.getByRole('button', { name: '展开人设图' }).click();
+  const portraitDialog = cardPage.getByRole('dialog', { name: '人设图预览' });
+  await portraitDialog.waitFor();
+  assert.ok(await portraitDialog.locator('img').evaluate(async image => { await image.decode(); return image.naturalWidth > 0; }));
+  assert.equal(await portraitFixture.locator('[data-anchor-field="name"]').count(), 0);
+  await cardPage.keyboard.press('Escape');
+  await portraitDialog.waitFor({ state: 'detached' });
+  await portraitFixture.locator('[data-anchor-id="portrait-anchor"]').first().click();
+  await portraitFixture.getByRole('button', { name: '展开人设图' }).click();
+  await portraitDialog.waitFor();
+  await portraitDialog.getByRole('button', { name: '关闭人设图预览' }).click();
+  await portraitDialog.waitFor({ state: 'detached' });
+  assert.equal(await portraitFixture.locator('[data-anchor-field="name"]').inputValue(), '预览角色');
+  await cardPage.evaluate(() => { window.removePortraitFixture(); document.getElementById('portrait-fixture').remove(); });
+  await cardPage.locator('#risu-card').selectOption('');
+  await cardPage.reload();
+  await cardPage.locator('#risu-card option[value="fixture-card"]').waitFor({ state: 'attached' });
+  assert.equal(await cardPage.locator('#risu-card').inputValue(), '');
+  assert.ok(await cardPage.locator('#card-form').isHidden());
+  await cardPage.evaluate(() => localStorage.setItem('witch-paintbox.admin-card', 'removed-card'));
+  await cardPage.reload();
+  await cardPage.locator('#risu-card option[value="fixture-card"]').waitFor({ state: 'attached' });
+  assert.equal(await cardPage.locator('#risu-card').inputValue(), '');
+  assert.equal(await cardPage.evaluate(() => localStorage.getItem('witch-paintbox.admin-card')), null);
+  await cardPage.close();
   await admin.setViewportSize({ width: 390, height: 800 });
   await admin.locator('#page-picker').selectOption('image');
   await editor.locator('[data-connection="key"]').waitFor();
@@ -347,6 +417,7 @@ try {
   assert.equal(await preview.evaluate(async image => { await image.decode(); return image.naturalWidth; }), 64);
   await admin.locator('.history-details summary').first().click();
   await admin.locator('.history-details[open] pre').first().waitFor();
+  assert.equal(await admin.locator('.history-item').first().getByRole('button', { name: '复制 Prompt', exact: true }).getAttribute('type'), 'button');
   await admin.locator('#history-scope').selectOption({ label: '测试' });
   await admin.locator('.history-item img').first().waitFor();
 
@@ -530,6 +601,25 @@ try {
   await page.getByRole('button', { name: '生图回顾', exact: true }).click();
   await page.locator('[data-review-grid] img').waitFor();
   assert.equal(await page.locator('[data-review-grid] img').count(), 1);
+  await page.locator('[data-review-image]').click();
+  const gallery = page.locator('.wp-gallery');
+  const novelaiLink = gallery.getByRole('button', { name: '复制 Prompt', exact: true });
+  const pagesBeforeCopy = page.context().pages().length;
+  const urlBeforeCopy = page.url();
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async text => { window.copiedPrompt = text; },
+    } });
+  });
+  await novelaiLink.click();
+  await gallery.getByRole('status').filter({ hasText: '角色和服装已解析，不含画师串' }).waitFor();
+  assert.equal(await page.evaluate(() => window.copiedPrompt), 'garden');
+  assert.equal(page.context().pages().length, pagesBeforeCopy);
+  assert.equal(page.url(), urlBeforeCopy);
+  await page.evaluate(() => { navigator.clipboard.writeText = async () => { throw new Error('denied'); }; });
+  await novelaiLink.dispatchEvent('click');
+  await gallery.getByRole('status').filter({ hasText: '复制失败' }).waitFor();
+  await gallery.getByRole('button', { name: '关闭图片查看器', exact: true }).click();
   await page.getByRole('button', { name: '服务连接', exact: true }).click();
   await page.getByLabel('正文内显示图片').check();
   await page.waitForFunction(() => fixture.view?.blob instanceof Blob);

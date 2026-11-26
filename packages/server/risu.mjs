@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { bounds, invalid, object, RequestError, text } from './request.mjs';
 
@@ -14,10 +14,25 @@ function preferences(value) {
 }
 
 function cardRecord(value, legacy = false) {
+  if (object(value?.library) && Array.isArray(value.library.people) && value.library.anchors === undefined) {
+    if (value.library.people.some(person => !object(person) || !text(person.name, 2048) || !person.name.trim())) invalid();
+    value = { ...value, library: { ...value.library, anchors: legacyAnchors(value.library.people) } };
+    delete value.library.people;
+  }
   if (!object(value) || !risuCardId(value.card?.chaId) || !text(value.card.name, 2048) || !value.card.name.trim()
-    || !object(value.library) || !Array.isArray(value.library.people) || !Array.isArray(value.library.backgrounds)
-    || [value.library.people, value.library.backgrounds].some(entries => entries.length > 1000
+    || !object(value.library) || !Array.isArray(value.library.anchors) || !Array.isArray(value.library.backgrounds)
+    || [value.library.anchors, value.library.backgrounds].some(entries => entries.length > 1000
       || entries.some(entry => !object(entry) || !text(entry.name, 2048) || !entry.name.trim()))
+    || value.library.anchors.some(anchor => !text(anchor.id, 128) || !anchor.id
+      || !text(anchor.appearance, 32768) || !text(anchor.negative, 32768)
+      || !Array.isArray(anchor.aliases) || anchor.aliases.some(alias => !text(alias, 2048))
+      || !Array.isArray(anchor.outfits) || anchor.outfits.some(outfit => !object(outfit)
+        || !text(outfit.id, 128) || !outfit.id || !text(outfit.name, 2048) || !text(outfit.tags, 32768))
+      || new Set(anchor.outfits.map(outfit => outfit.id)).size !== anchor.outfits.length
+      || !text(anchor.selectedOutfitId, 128) || anchor.selectedOutfitId && !anchor.outfits.some(outfit => outfit.id === anchor.selectedOutfitId)
+      || !Number.isFinite(anchor.updatedAt) || anchor.updatedAt < 0
+      || anchor.portrait !== null && (!text(anchor.portrait, 14 * 1024 * 1024) || !/^data:image\/(png|jpeg|webp);base64,[a-zA-Z0-9+/=]+$/.test(anchor.portrait)))
+    || new Set(value.library.anchors.map(anchor => anchor.id)).size !== value.library.anchors.length
     || Object.hasOwn(value.card, 'chats') || Object.hasOwn(value.card, 'coldStoragedChats')) invalid();
   const { card, library, artistPresetIds } = value;
   if (artistPresetIds === undefined) return { card, library };
@@ -30,10 +45,17 @@ function cardRecord(value, legacy = false) {
 
 export async function openRisuConfig(directory) {
   const path = join(directory, 'risu.json');
-  let state = { revision: null, preferences: risuDefaults, cards: [] };
+  let state = { version: 2, revision: null, preferences: risuDefaults, cards: [] };
   try {
     const saved = JSON.parse(await readFile(path, 'utf8'));
-    state = { revision: saved.revision, preferences: preferences(saved.preferences), cards: saved.cards.map(value => cardRecord(value, true)) };
+    state = { version: 2, revision: saved.revision, preferences: preferences(saved.preferences), cards: saved.cards.map(value => cardRecord(value, true)) };
+    if (saved.cards.some(entry => entry.library.people !== undefined && entry.library.anchors === undefined)) {
+      // Back up before replacing the old format; the rename makes migration atomic.
+      await copyFile(path, join(directory, `risu.before-anchors-${randomUUID()}.json`));
+      const temporary = `${path}.${randomUUID()}.tmp`;
+      try { await writeFile(temporary, JSON.stringify(state), { mode: 0o600, flag: 'wx' }); await rename(temporary, path); }
+      finally { await unlink(temporary).catch(() => {}); }
+    }
   } catch (error) { if (error.code !== 'ENOENT') throw error; }
   let tail = Promise.resolve();
 
@@ -76,15 +98,7 @@ export async function openRisuConfig(directory) {
 
 export function risuLibrary(entry) {
   const string = value => typeof value === 'string' ? value : '';
-  const anchors = (entry?.library.people ?? []).filter(person => string(person.appearance).trim()).map(person => ({
-    id: string(person.id) || person.name, name: person.name, appearance: person.appearance,
-    aliases: [...new Set([person.varId, person.id, ...(Array.isArray(person.aliases) ? person.aliases : [])])]
-      .filter(alias => typeof alias === 'string' && alias.trim() && alias !== person.name),
-    negative: string(person.negative), selectedOutfitId: string(person.defaultOutfitId),
-    outfits: (Array.isArray(person.outfits) ? person.outfits : []).filter(object)
-      .map(outfit => ({ id: string(outfit.id), name: string(outfit.name), tags: string(outfit.description) }))
-      .filter(outfit => outfit.id && outfit.name && outfit.tags),
-  }));
+  const anchors = (entry?.library.anchors ?? legacyAnchors(entry?.library.people ?? [])).filter(person => string(person.appearance).trim()).map(person => ({ ...person, aliases: [...person.aliases] }));
   const names = new Set(anchors.flatMap(anchor => [anchor.name, ...anchor.aliases]));
   const shortNames = anchors.map(anchor => /^(.*?)\s*[（(][^（）()]+[）)]\s*$/.exec(anchor.name)?.[1].trim());
   for (const [index, name] of shortNames.entries()) {
@@ -92,6 +106,19 @@ export function risuLibrary(entry) {
   }
   const backgrounds = (entry?.library.backgrounds ?? []).map(scene => `${scene.name}: ${string(scene.description)}`).join('\n');
   const description = [entry?.card.desc, entry?.card.scenario].map(string).filter(Boolean).join('\n').slice(0, 6000);
-  return { anchors, sharedOutfits: [], artistPresetIds: entry?.artistPresetIds,
+  return { anchors, artistPresetIds: entry?.artistPresetIds,
     context: [description, backgrounds].filter(Boolean).join('\n\n').slice(0, 24000) };
+}
+
+function legacyAnchors(people) {
+  const string = value => typeof value === 'string' ? value : '';
+  return people.map(person => ({
+    id: string(person.id) || person.name, name: person.name, appearance: person.appearance,
+    aliases: [...new Set([person.varId, person.id, ...(Array.isArray(person.aliases) ? person.aliases : [])])]
+      .filter(alias => typeof alias === 'string' && alias.trim() && alias !== person.name),
+    negative: string(person.negative), selectedOutfitId: string(person.defaultOutfitId), portrait: null, updatedAt: 0,
+    outfits: (Array.isArray(person.outfits) ? person.outfits : []).filter(object)
+      .map(outfit => ({ id: string(outfit.id), name: string(outfit.name), tags: string(outfit.description) }))
+      .filter(outfit => outfit.id && outfit.name && outfit.tags),
+  }));
 }

@@ -1,6 +1,8 @@
 import { historySourceName, historyTitle } from '/dist/image-history-data.js';
 import { imageProviderName } from '/dist/image-settings.js';
 import { unpack } from '/dist/service-protocol.js';
+import { mountRisuCardAnchors } from '/dist/risu-card-editor.js';
+import { createPromptCopyButton } from '/dist/novelai-link.js';
 
 const byId = id => document.getElementById(id);
 const auth = byId('auth');
@@ -16,9 +18,11 @@ pagePicker.addEventListener('change', () => { location.hash = pagePicker.value; 
 let risuReady;
 let activePage;
 const sessionKey = 'witch-paintbox.admin-token';
+const cardSelectionKey = 'witch-paintbox.admin-card';
 let token = '';
 let authBusy = false;
 let liveTimer;
+let liveFailures = 0;
 let reconnectTimer;
 
 function readToken() {
@@ -34,6 +38,7 @@ function rememberToken(value) {
 }
 let risuState;
 let cardDraft;
+let unmountCardAnchors;
 let cardRequest;
 let artistPresets;
 let historyRequest;
@@ -110,6 +115,15 @@ async function loadRisu() {
     prefsForm.querySelector('fieldset').disabled = false;
     cardSelect.replaceChildren(new Option('选择角色卡', ''), ...risuState.cards.map(card => new Option(card.name, card.id)));
     status('card-status', risuState.cards.length ? `共 ${risuState.cards.length} 张角色卡。` : '服务尚未收录 Risu 角色卡。');
+    let selected = '';
+    try { selected = localStorage.getItem(cardSelectionKey) ?? ''; }
+    catch { /* Card selection still works when browser storage is unavailable. */ }
+    if (selected && risuState.cards.some(card => card.id === selected)) {
+      cardSelect.value = selected;
+      await loadCard();
+    } else if (selected) {
+      try { localStorage.removeItem(cardSelectionKey); } catch { /* Storage may be unavailable. */ }
+    }
   } catch (error) {
     status('risu-status', error.message, true);
     status('card-status', error.message, true);
@@ -179,17 +193,24 @@ function fieldsForCard(entry) {
   cardForm.elements.description.value = card.desc ?? '';
   cardForm.elements.scenario.value = card.scenario ?? '';
   fieldsForArtistPresets(entry);
-  const people = promptGroup(`人物 Prompt · ${library.people.length} 人`);
-  for (const person of library.people) {
-    const group = promptGroup(person.name);
-    group.append(editable('人物名称', person, 'name'), editable('外貌 Prompt', person, 'appearance', true),
-      editable('负向 Prompt', person, 'negative', true));
-    for (const outfit of Array.isArray(person.outfits) ? person.outfits.filter(item => item && typeof item === 'object') : []) {
-      group.append(editable(`服装 Prompt · ${outfit.name || '未命名'}`, outfit, 'description', true));
-    }
-    people.append(group);
-  }
-  if (!library.people.length) people.append(node('p', '本卡暂无人物资料。', 'muted'));
+  unmountCardAnchors?.();
+  const people = node('div');
+  const root = people.attachShadow({ mode: 'open' });
+  const style = node('link');
+  style.rel = 'stylesheet';
+  style.href = '/style.css';
+  const anchors = node('div');
+  root.append(style, anchors);
+  unmountCardAnchors = mountRisuCardAnchors(anchors, () => library.anchors, async next => {
+    const draft = cardDraft;
+    if (!draft || draft.entry !== entry) throw new Error('角色卡已切换，请重新打开。');
+    updateCardFields(entry);
+    const saved = await json('admin/risu/cards', { revision: draft.revision,
+      cards: [{ ...entry, library: { ...library, anchors: next } }] });
+    if (risuState.revision === draft.revision) risuState.revision = saved.revision;
+    draft.revision = saved.revision;
+    library.anchors = next;
+  });
   const backgrounds = promptGroup(`场景 Prompt · ${library.backgrounds.length} 项`);
   for (const scene of library.backgrounds) {
     backgrounds.append(editable('场景名称', scene, 'name'), editable('场景描述', scene, 'description', true));
@@ -207,6 +228,7 @@ function updateCardFields(entry) {
 
 async function loadCard() {
   cardRequest?.abort();
+  unmountCardAnchors?.();
   cardDraft = undefined;
   cardForm.hidden = true;
   byId('card-advanced').open = false;
@@ -228,7 +250,13 @@ async function loadCard() {
   }
 }
 
-cardSelect.addEventListener('change', loadCard);
+cardSelect.addEventListener('change', () => {
+  try {
+    if (cardSelect.value) localStorage.setItem(cardSelectionKey, cardSelect.value);
+    else localStorage.removeItem(cardSelectionKey);
+  } catch { /* Card selection still works when browser storage is unavailable. */ }
+  void loadCard();
+});
 byId('card-reload').addEventListener('click', loadCard);
 byId('card-advanced').addEventListener('toggle', event => {
   if (!event.currentTarget.open || !cardDraft) return;
@@ -239,8 +267,8 @@ byId('card-apply-json').addEventListener('click', () => {
   try {
     const entry = JSON.parse(byId('card-json').value);
     if (entry.card?.chaId !== cardSelect.value) throw new Error('角色卡 ID 必须与当前角色卡一致。');
-    if (!Array.isArray(entry.library?.people) || !Array.isArray(entry.library?.backgrounds)
-      || [...entry.library.people, ...entry.library.backgrounds].some(item => typeof item?.name !== 'string')) {
+    if (!Array.isArray(entry.library?.anchors) || !Array.isArray(entry.library?.backgrounds)
+      || [...entry.library.anchors, ...entry.library.backgrounds].some(item => typeof item?.name !== 'string')) {
       throw new Error('本卡 JSON 必须包含人物与场景列表，各条目须有名称。');
     }
     fieldsForCard(entry);
@@ -295,6 +323,13 @@ function historyItem(entry, blob) {
     name, new Date(entry.createdAt).toLocaleString('zh-CN'), imageProviderName(entry.provider ?? 'novelai'), model, width && height && `${width}×${height}`,
   ].filter(Boolean).join(' · '), 'muted'));
   const prompts = promptGroup('本次 Prompt');
+  const novelaiStatus = node('p', '', 'muted');
+  novelaiStatus.setAttribute('role', 'status');
+  const novelaiLink = createPromptCopyButton(entry, (text, error = false) => {
+    novelaiStatus.textContent = text.replace('生成属性', '本次 Prompt');
+    novelaiStatus.classList.toggle('is-error', error);
+  });
+  if (novelaiLink) content.append(novelaiLink, novelaiStatus);
   prompts.className = 'history-details';
   appendPrompt(prompts, '原始场景', entry.scenePrompt);
   appendPrompt(prompts, '实际正向', entry.positive);
@@ -432,16 +467,20 @@ function queueText({ active, queued }) {
 async function monitor() {
   clearTimeout(liveTimer);
   try {
-    const data = await json('admin/status', undefined, AbortSignal.timeout(3500));
+    const data = await json('admin/status', undefined, AbortSignal.timeout(8000));
+    liveFailures = 0;
     byId('live-connection').textContent = data.configured ? '在线 · 接收请求' : '在线 · 待配置';
     byId('live-prompt').textContent = queueText(data.prompt);
     byId('live-draw').textContent = queueText(data.draw);
     byId('live-check').textContent = `更新于 ${new Date().toLocaleTimeString('zh-CN')}`;
   } catch (error) {
     if (deny(error)) { logout(); return; }
-    byId('live-connection').textContent = '连接中断 · 正在重连';
+    liveFailures++;
+    byId('live-connection').textContent = liveFailures < 3 ? '状态更新延迟 · 正在重试' : '连接中断 · 正在重连';
     byId('live-prompt').textContent = byId('live-draw').textContent = '—';
-    byId('live-check').textContent = '';
+    byId('live-check').textContent = error.name === 'TimeoutError'
+      ? '状态查询超时，正在重试。'
+      : `状态查询失败：${error.message}`;
   }
   liveTimer = setTimeout(monitor, 1000);
 }
@@ -462,9 +501,8 @@ async function connect(candidate, restoring = false) {
     byId('dashboard').hidden = byId('refresh').hidden = byId('logout').hidden = false;
     status('error');
     void monitor();
-    risuReady = loadRisu();
+    risuReady = loadEditor().then(loadRisu);
     showPage();
-    void loadEditor();
   } catch (error) {
     token = '';
     if (deny(error)) rememberToken('');

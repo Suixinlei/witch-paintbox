@@ -11,6 +11,7 @@ import { encodeVibe } from '@witch-paintbox/plugin-sifang/runtime/vibe-transfer.
 import { createImageQueue } from '@witch-paintbox/plugin-sifang/runtime/image-queue.js';
 import { createImageInsertionPlan, createSelectedImageInsertionPlan, selectImageInsertionPoints, applyImageInsertions } from '@witch-paintbox/plugin-sifang/runtime/image-insertion.js';
 import { imagePlanningInput } from '@witch-paintbox/plugin-sifang/runtime/image-planning.js';
+import { validCharacterPosition } from '@witch-paintbox/plugin-sifang/runtime/character-position.js';
 import { normalizeIllustrationItems } from '@witch-paintbox/plugin-sifang/runtime/illustration-selection.js';
 import { MAX_IMAGE_MARKERS, MAX_ORIGINAL_LENGTH, parseImageMarkers } from '@witch-paintbox/plugin-sifang/runtime/image-markers.js';
 import { packet } from '@witch-paintbox/plugin-sifang/runtime/service-protocol.js';
@@ -55,7 +56,7 @@ export function createImageJobs({ config, library, defaultModel }) {
     const upstream = settings.mode === 'custom' ? settings
       : { ...settings, url: defaultModel.url, key: defaultModel.key, model: defaultModel.name };
     if (!upstream.url.trim() || !upstream.model.trim()) throw new RequestError('模型连接未配置，请设置独立服务默认模型或使用自定义模型接口。', 400, 'setup');
-    const input = imagePlanningInput(selected, validatedItems);
+    const input = imagePlanningInput(selected, validatedItems, snapshot.image.profiles.novelai.parameters.model !== 'nai-diffusion-3');
     const countInstruction = requirePictures
       ? `用户已手动请求为本楼配图。请从给出的插入点中选取 1 至 ${maxImages} 个场景，生成对应提示词。`
       : `本次最多规划 ${maxImages} 张图。没有值得配图的场景时返回空 JSON 数组。`;
@@ -70,8 +71,7 @@ export function createImageJobs({ config, library, defaultModel }) {
       });
       return requestServiceModel(upstream, messages, signal, fetchLocalModel);
     }, signal);
-    const result = applyImageInsertions(selected, answer, validatedItems);
-    if (maxImages !== undefined && result.added.length > maxImages) throw new RequestError(`AI 返回的配图超过本次 ${maxImages} 张上限。`, 422);
+    const result = applyImageInsertions(selected, answer, validatedItems, maxImages);
     if (!result.added.length && requirePictures) throw new RequestError('配图模型没有返回可用的插图计划，已保留原有图片。', 422);
     if (!result.added.length && maxImages === undefined) throw new RequestError('AI 未返回配图数据，原文未变。');
     if (!draw) return packet(result);
@@ -115,6 +115,7 @@ export function createImageJobs({ config, library, defaultModel }) {
     const size = parseImageSize(input.size);
     if (input.size !== undefined && !size) invalid();
     let prompt;
+    let artistPositive = '';
     if ('scene' in input) {
       if (!text(input.scene, 1_048_576)) invalid();
       const artistId = snapshot.artistPresetIds?.novelai;
@@ -129,19 +130,26 @@ export function createImageJobs({ config, library, defaultModel }) {
       if (size && imageSizeMode(model) === 'ai') {
         settings = { ...settings, parameters: { ...settings.parameters, ...imageSizeDimensions(size) } };
       }
-      prompt = await prepareNovelAIPrompt(settings, input.scene, input.workshop ? '' : settings.positive,
+      artistPositive = input.workshop ? '' : settings.positive;
+      prompt = await prepareNovelAIPrompt(settings, input.scene, artistPositive,
         { anchors: snapshot.anchors, outfits: snapshot.sharedOutfits });
     } else {
       prompt = input.prompt;
       if (!object(prompt) || !text(prompt.positive, 1_048_576) || !text(prompt.negative, 1_048_576)
         || !Array.isArray(prompt.characters) || prompt.characters.length > 22
-        || prompt.characters.some(item => !object(item) || !text(item.positive, 1_048_576) || !text(item.negative, 1_048_576))
+        || prompt.characters.some(item => !object(item) || !text(item.positive, 1_048_576) || !text(item.negative, 1_048_576)
+          || item.center !== undefined && !validCharacterPosition(item.center))
        ) invalid();
       if (size) settings = { ...settings, parameters: { ...settings.parameters, ...imageSizeDimensions(size) } };
     }
-    const { blob, ...result } = await drawNovelAI(settings, prompt, signal, undefined, {
+    const basePositive = artistPositive.trim()
+      ? prompt.positive === artistPositive ? '' : prompt.positive.slice(artistPositive.length + 2)
+      : prompt.positive;
+    const copyPrompt = [basePositive, ...prompt.characters.map(character => character.positive)].filter(Boolean).join(',\n');
+    const { blob, ...drawn } = await drawNovelAI(settings, prompt, signal, undefined, {
       state: snapshot.vibes, encode: (connection, image, model, amount, job) => library.cachedEncoding(connection, image, model, amount, job, encodeVibe),
     }, fetchNovelAI);
+    const result = { ...drawn, copyPrompt };
     signal.throwIfAborted();
     if (!draft) return { result, blob };
     const createdAt = Date.now();

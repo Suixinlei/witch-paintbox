@@ -13,6 +13,7 @@ import { fetchServiceModelList } from '@witch-paintbox/plugin-sifang/runtime/mod
 import { MAX_IMAGE_BYTES } from '@witch-paintbox/plugin-sifang/runtime/image-bytes.js';
 import { withFault } from '@witch-paintbox/plugin-sifang/runtime/pet-events.js';
 import { historyScope } from '@witch-paintbox/plugin-sifang/runtime/image-history-data.js';
+import { prepareImagePrompt } from '@witch-paintbox/plugin-sifang/runtime/image-prompt.js';
 import { defaultSettings } from '@witch-paintbox/plugin-sifang/runtime/settings.js';
 import { createImageJobs } from './jobs.mjs';
 import { openRisuConfig, risuCardId, risuLibrary } from './risu.mjs';
@@ -34,9 +35,19 @@ const port = Number(env.PAINTBOX_PORT || 4783);
 if (!bounds(port, 0, 65535)) throw new Error('服务端口无效。');
 const origins = new Set((env.PAINTBOX_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean));
 const directory = resolve(env.PAINTBOX_DATA_DIR || 'paintbox-data');
-const library = await openLibrary(directory);
 const config = await openServiceConfig(directory);
 const risu = await openRisuConfig(directory);
+const library = await openLibrary(directory, async entry => {
+  if (!entry.scenePrompt) return undefined;
+  const scope = historyScope(entry.markerKey);
+  const current = config.snapshot();
+  const anchors = risuScope(scope) ? risuLibrary(risu.card(scope.slice(5))).anchors : current?.anchors ?? [];
+  const model = entry.parameters.model;
+  const limit = model === 'nai-diffusion-3' ? 0 : model.startsWith('nai-diffusion-5') ? 22 : 6;
+  const prepared = await prepareImagePrompt(entry.scenePrompt, '', '', limit,
+    { anchors, outfits: current?.sharedOutfits ?? [] });
+  return [prepared.positive, ...prepared.characters.map(character => character.positive)].filter(Boolean).join(',\n');
+});
 registerBuiltinLayers();
 const jobs = createImageJobs({
   config, library,
@@ -97,7 +108,7 @@ async function route(req, res, signal, isRisu) {
     const sifang = library.categories().find(entry => entry.name.startsWith('四方世界')
       && entry.scope.startsWith('["character",'));
     return sendJson(res, { revision, preferences, cards: cards.map(({ card, library }) => ({
-      id: card.chaId, name: card.name, people: library.people.length, backgrounds: library.backgrounds.length,
+      id: card.chaId, name: card.name, people: library.anchors.length, backgrounds: library.backgrounds.length,
     })), sifang: { name: sifang?.name ?? '四方世界', scope: sifang?.scope ?? null,
       anchors: config.snapshot()?.anchors.length ?? 0 } });
   }
@@ -119,7 +130,7 @@ async function route(req, res, signal, isRisu) {
   if (req.method === 'GET' && path === '/v1/history/categories') return sendJson(res, library.categories());
   if (req.method !== 'POST') throw new RequestError('独立服务接口不存在。', 404);
   if (path === '/v1/admin/risu/preferences') return sendJson(res, { revision: await risu.savePreferences(await readJson(req), signal) });
-  if (path === '/v1/admin/risu/cards') return sendJson(res, { revision: await risu.putCards(await readJson(req), signal) });
+  if (path === '/v1/admin/risu/cards') return sendJson(res, { revision: await risu.putCards(await readJson(req, 128 * 1024 * 1024), signal) });
   if (path === '/v1/admin/risu/card') {
     const { id, withRevision } = await readJson(req);
     if (!risuCardId(id) || (withRevision !== undefined && typeof withRevision !== 'boolean')) invalid();
