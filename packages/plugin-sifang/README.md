@@ -37,12 +37,13 @@
 
 服务复用画匣的插入点规划、指定插图校验、角色与服装标签展开、世界书、NovelAI 氛围参考。独立服务的生图通道仅支持 NovelAI，读取旧配置时使用其中的 NAI 连接、画师串和正文预设。四方同时开启「回复后自动写 Tag」和「新标记自动出图」时，每条合格的回复只发送一个任务请求，服务完成规划与绘图后一次返回配图标记、生成图片和各张保存状态。只开自动写 Tag 时返回标记，手动出图和重绘一次请求一张。四方核对楼层后才写回。楼层已变化时，已生成的图片仍可在服务历史查看。单张失败可在对应画框手动重试。
 
-在运行服务的设备上进入仓库目录。以下命令适用于 PowerShell，需 Node.js 22 或更新版本。
+在运行服务的设备上进入仓库目录。默认在 WSL2 Bash 中执行，使用 Linux 原生 Node.js 22.12 或更新版本和 pnpm 11.25.0；环境准备见 [WSL2 指南](../../docs/DEVELOPMENT-WSL2.md)。
 
-```powershell
+```bash
 pnpm install --frozen-lockfile
 pnpm build
-$env:PAINTBOX_TOKEN = node -p "require('node:crypto').randomBytes(32).toString('hex')"
+# 仅首次新建服务生成令牌；已有服务沿用现有 service.env
+export PAINTBOX_TOKEN="$(node -p "require('node:crypto').randomBytes(32).toString('hex')")"
 pnpm service
 ```
 

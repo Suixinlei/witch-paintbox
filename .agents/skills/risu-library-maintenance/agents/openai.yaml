@@ -1,0 +1,4 @@
+interface:
+  display_name: "Risu 角色卡与服装维护"
+  short_description: "读取本机 Risu 角色卡，在魔女画匣维护各卡人物、服装和人设图"
+  default_prompt: "使用 $risu-library-maintenance 读取指定 Risu 角色卡，并在魔女画匣维护本卡人物与服装。"

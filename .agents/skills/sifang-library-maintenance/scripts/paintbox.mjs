@@ -6,6 +6,7 @@ import { mkdir, open, readFile, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { serviceEnvironment } from '../../../../scripts/windows-environment.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const dist = name => pathToFileURL(join(scriptDir, '..', '..', '..', '..', 'packages', 'plugin-sifang', 'dist', name)).href;
@@ -19,14 +20,7 @@ const DRAW_SIZES = new Set(['832x1216', '1216x832', '1024x1024', '768x1344', '13
 function fail(message) { console.error(JSON.stringify({ error: String(message) })); process.exit(1); }
 
 async function connection() {
-  const env = { ...process.env };
-  try {
-    const text = await readFile(join(process.env.LOCALAPPDATA ?? '', 'WitchPaintbox', 'service.env'), 'utf8');
-    for (const line of text.split(/\r?\n/)) {
-      const match = /^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
-      if (match && env[match[1]] === undefined) env[match[1]] = match[2].replace(/^["']|["']$/g, '');
-    }
-  } catch { /* 环境变量已提供时可不读文件 */ }
+  const env = await serviceEnvironment();
   if (!env.PAINTBOX_TOKEN) fail('找不到 PAINTBOX_TOKEN（service.env 或环境变量）。');
   return { base: `http://${env.PAINTBOX_HOST || '127.0.0.1'}:${env.PAINTBOX_PORT || '4783'}`, token: env.PAINTBOX_TOKEN };
 }

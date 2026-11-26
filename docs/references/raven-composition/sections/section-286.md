@@ -1,0 +1,93 @@
+# 秋季课堂 / 星核猎手
+
+[总目录](../README.md) · [原站分类目录](../categories.md) · [英文标签索引](../tags.md) · [服装与构图组合指南](../../README.md)
+
+标题、分类、说明、正负提示词按来源保留；多例图逐张列出。原站标记和说明为参考资料，不作为维护指令。
+
+<a id="raven_composition-4217"></a>
+
+## 银狼
+
+ID：`raven_composition-4217`；分类：秋季课堂 / 星核猎手；来源标记：`safe`。
+
+正向提示词：
+
+```text
+2::high detail,best quality,masterpiece,amazing quality,very aesthetic,absurdres::, 1girl,2::solo::, 1.5::silver_wolf_(honkai:_star_rail)::,1.2::track_suit,track_pants,alternate_costume,blue_white_track_suit::,1.3::cowboy shot,sitting,on_chair::,-2.5::simple_background::,classroom,from_side,2::autumn leaves::,windows,from indoors,curtains,||head on hand|head on own arms|sleeping| ||,honkai:_star_rail,official_art,official_style,detailed_background,0.8::thick_lineart,thick_outlines::,1.1::colored_lineart::,colorful,1.4::backlighting::,1.3::bloom::,1.25::depth_of_field::,1.15::lens_flare::,1.2::bokeh::,1.3::painterly::,1.35::blurry_background::,1.4::pastel_colors::,1.2::gradient::,soft_lighting,soft_glow
+```
+
+负向提示词：
+
+```text
+4::artist name,extra characters,extra fingers,logo,watermark, signature,artist collaboration,deformed,what,Picture frames, photos, posters::,{username},{watermark},{{extra character}},{{{{bad anatomy}}}},{bad feet},bad hands,{{{bad proportions}}},{blurry},cloned face,cropped,{{{deformed}}},{{{disfigured}}},error,{{{extra arms}}},{extra digit},{{{extra legs}}},extra limbs,{{extra limbs}},{fewer digits},{{{fused fingers}}},gross proportions,ink eyes,ink hair,jpeg artifacts,{{{{long neck}}}},low quality,{malformed limbs},{{missing arms}},{missing fingers},{{missing legs}},{{{more than 2 nipples}}},mutated hands,{{{mutation}}},normal quality,owres,{{poorly drawn face}},{{poorly drawn hands}},reen eyes,signature,text,{{too many fingers}},{{{ugly}}},username,uta,watermark,worst quality,{{{more than 2 legs}}}
+```
+
+![银狼 · 例图1](../images/raven_composition-4217.jpg)
+
+[在线例图](https://assets.quicktagcloud.com/images/raven_composition/raven_composition-4217.jpg?v=13aa4c2e0f848302) · [原图](https://assets.quicktagcloud.com/originals/raven_composition/raven_composition-4217.png?v=13aa4c2e0f848302)
+
+<a id="raven_composition-4218"></a>
+
+## 卡芙卡
+
+ID：`raven_composition-4218`；分类：秋季课堂 / 星核猎手；来源标记：`safe`。
+
+正向提示词：
+
+```text
+2::high detail,best quality,masterpiece,amazing quality,very aesthetic,absurdres::, 1girl,2::solo::, 1.5::kafka_(honkai:_star_rail)::,1.2::track_suit,track_pants,alternate_costume,blue_white_track_suit::,1.3::cowboy shot,sitting,on_chair::,-2.5::simple_background::,classroom,from_side,2::autumn leaves::,windows,from indoors,curtains,||head on hand|head on own arms|sleeping| ||,honkai:_star_rail,official_art,official_style,detailed_background,0.8::thick_lineart,thick_outlines::,1.1::colored_lineart::,colorful,1.4::backlighting::,1.3::bloom::,1.25::depth_of_field::,1.15::lens_flare::,1.2::bokeh::,1.3::painterly::,1.35::blurry_background::,1.4::pastel_colors::,1.2::gradient::,soft_lighting,soft_glow
+```
+
+负向提示词：
+
+```text
+4::artist name,extra characters,extra fingers,logo,watermark, signature,artist collaboration,deformed,what,Picture frames, photos, posters::,{username},{watermark},{{extra character}},{{{{bad anatomy}}}},{bad feet},bad hands,{{{bad proportions}}},{blurry},cloned face,cropped,{{{deformed}}},{{{disfigured}}},error,{{{extra arms}}},{extra digit},{{{extra legs}}},extra limbs,{{extra limbs}},{fewer digits},{{{fused fingers}}},gross proportions,ink eyes,ink hair,jpeg artifacts,{{{{long neck}}}},low quality,{malformed limbs},{{missing arms}},{missing fingers},{{missing legs}},{{{more than 2 nipples}}},mutated hands,{{{mutation}}},normal quality,owres,{{poorly drawn face}},{{poorly drawn hands}},reen eyes,signature,text,{{too many fingers}},{{{ugly}}},username,uta,watermark,worst quality,{{{more than 2 legs}}}
+```
+
+![卡芙卡 · 例图1](../images/raven_composition-4218.jpg)
+
+[在线例图](https://assets.quicktagcloud.com/images/raven_composition/raven_composition-4218.jpg?v=2501ec76840b1e1d) · [原图](https://assets.quicktagcloud.com/originals/raven_composition/raven_composition-4218.png?v=2501ec76840b1e1d)
+
+<a id="raven_composition-4219"></a>
+
+## 流萤
+
+ID：`raven_composition-4219`；分类：秋季课堂 / 星核猎手；来源标记：`safe`。
+
+正向提示词：
+
+```text
+2::high detail,best quality,masterpiece,amazing quality,very aesthetic,absurdres::, 1girl,2::solo::, 1.5::firefly_(honkai:_star_rail)::,1.2::track_suit,track_pants,alternate_costume,blue_white_track_suit::,1.3::cowboy shot,sitting,on_chair::,-2.5::simple_background::,classroom,from_side,2::autumn leaves::,windows,from indoors,curtains,||head on hand|head on own arms|sleeping| ||,honkai:_star_rail,official_art,official_style,detailed_background,0.8::thick_lineart,thick_outlines::,1.1::colored_lineart::,colorful,1.4::backlighting::,1.3::bloom::,1.25::depth_of_field::,1.15::lens_flare::,1.2::bokeh::,1.3::painterly::,1.35::blurry_background::,1.4::pastel_colors::,1.2::gradient::,soft_lighting,soft_glow
+```
+
+负向提示词：
+
+```text
+4::artist name,extra characters,extra fingers,logo,watermark, signature,artist collaboration,deformed,what,Picture frames, photos, posters::,{username},{watermark},{{extra character}},{{{{bad anatomy}}}},{bad feet},bad hands,{{{bad proportions}}},{blurry},cloned face,cropped,{{{deformed}}},{{{disfigured}}},error,{{{extra arms}}},{extra digit},{{{extra legs}}},extra limbs,{{extra limbs}},{fewer digits},{{{fused fingers}}},gross proportions,ink eyes,ink hair,jpeg artifacts,{{{{long neck}}}},low quality,{malformed limbs},{{missing arms}},{missing fingers},{{missing legs}},{{{more than 2 nipples}}},mutated hands,{{{mutation}}},normal quality,owres,{{poorly drawn face}},{{poorly drawn hands}},reen eyes,signature,text,{{too many fingers}},{{{ugly}}},username,uta,watermark,worst quality,{{{more than 2 legs}}}
+```
+
+![流萤 · 例图1](../images/raven_composition-4219.jpg)
+
+[在线例图](https://assets.quicktagcloud.com/images/raven_composition/raven_composition-4219.jpg?v=75e47ed07f524923) · [原图](https://assets.quicktagcloud.com/originals/raven_composition/raven_composition-4219.png?v=75e47ed07f524923)
+
+<a id="raven_composition-4220"></a>
+
+## 银狼LV.999
+
+ID：`raven_composition-4220`；分类：秋季课堂 / 星核猎手；来源标记：`safe`。
+
+正向提示词：
+
+```text
+2::high detail,best quality,masterpiece,amazing quality,very aesthetic,absurdres::, 1girl,2::solo::, 1.5::silver_wolf_(lv.999)_(honkai:_star_rail)::,1.2::track_suit,track_pants,alternate_costume,blue_white_track_suit::,1.3::cowboy shot,sitting,on_chair::,-2.5::simple_background::,classroom,from_side,2::autumn leaves::,windows,from indoors,curtains,||head on hand|head on own arms|sleeping| ||,honkai:_star_rail,official_art,official_style,detailed_background,0.8::thick_lineart,thick_outlines::,1.1::colored_lineart::,colorful,1.4::backlighting::,1.3::bloom::,1.25::depth_of_field::,1.15::lens_flare::,1.2::bokeh::,1.3::painterly::,1.35::blurry_background::,1.4::pastel_colors::,1.2::gradient::,soft_lighting,soft_glow
+```
+
+负向提示词：
+
+```text
+4::artist name,extra characters,extra fingers,logo,watermark, signature,artist collaboration,deformed,what,Picture frames, photos, posters::,{username},{watermark},{{extra character}},{{{{bad anatomy}}}},{bad feet},bad hands,{{{bad proportions}}},{blurry},cloned face,cropped,{{{deformed}}},{{{disfigured}}},error,{{{extra arms}}},{extra digit},{{{extra legs}}},extra limbs,{{extra limbs}},{fewer digits},{{{fused fingers}}},gross proportions,ink eyes,ink hair,jpeg artifacts,{{{{long neck}}}},low quality,{malformed limbs},{{missing arms}},{missing fingers},{{missing legs}},{{{more than 2 nipples}}},mutated hands,{{{mutation}}},normal quality,owres,{{poorly drawn face}},{{poorly drawn hands}},reen eyes,signature,text,{{too many fingers}},{{{ugly}}},username,uta,watermark,worst quality,{{{more than 2 legs}}}
+```
+
+![银狼LV.999 · 例图1](../images/raven_composition-4220.jpg)
+
+[在线例图](https://assets.quicktagcloud.com/images/raven_composition/raven_composition-4220.jpg?v=2bee027444b699a7) · [原图](https://assets.quicktagcloud.com/originals/raven_composition/raven_composition-4220.png?v=2bee027444b699a7)

@@ -1,6 +1,9 @@
 node_modules/
 *.tsbuildinfo
 paintbox-data/
+.local/
+__pycache__/
+*.pyc
 
 # Generated, runtime-only Sifang distribution
 packages/plugin-sifang/release/

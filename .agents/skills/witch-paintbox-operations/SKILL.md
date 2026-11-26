@@ -5,7 +5,7 @@ description: Use when implementing changes to the Witch Paintbox service or its 
 
 # 魔女画匣三端运维
 
-以下命令从仓库根目录运行。
+默认从 WSL2 的 `/mnt/d/Projects/witch-paintbox` 运行，使用 Linux 原生 Node 和 pnpm。环境准备与依赖隔离见 [WSL2 指南](../../../docs/DEVELOPMENT-WSL2.md)。只有 Windows 计划任务和 Windows 发布目录的操作通过 powershell.exe 桥接；源码安装、构建和测试仍由部署脚本调用 WSL2。
 
 - 改了独立服务、管理台或服务实际加载的共享运行时代码，就在同一轮完成本机部署和验收，包括从 Risu 发起、实际由服务实现的功能。用户明确要求只改代码或暂缓上线时，按该要求执行。
 - GitHub 发布四方插件和写入本机 Risu 已安装插件走各自流程。用户同时要求部署服务和发布四方时，先准备发布提交，在同一份待发布代码上部署和验证服务，再推 GitHub。
@@ -14,8 +14,8 @@ description: Use when implementing changes to the Witch Paintbox service or its 
 
 本机服务改动完成后，执行以下命令。若 shell 返回进程会话，等待该会话并读取最终状态。
 
-```powershell
-& ./.agents/skills/witch-paintbox-operations/scripts/update-server.ps1 -Apply
+```bash
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w .agents/skills/witch-paintbox-operations/scripts/update-server.ps1)" -Apply
 ```
 
 省略 `-Apply` 时只检查运行状态。脚本构建并跑服务测试，在独立目录安装运行依赖，用临时端口和空数据预检。建议在无人发起新任务的时段操作。脚本看到队列空闲后切换并重启 Windows 计划任务 `Witch Paintbox Local Service`，沿用 `%LOCALAPPDATA%/WitchPaintbox/service.env` 和原数据目录。验收包括端口 4783 的新进程、管理页、权限、配置版本、历史图片和 Risu 偏好。仅在报告 `updated` 时确认部署成功。若失败，按脚本结果区分旧服务仍在、已回退或回退失败。验收使用现有记录，无需真实出图。
@@ -28,16 +28,16 @@ description: Use when implementing changes to the Witch Paintbox service or its 
 
 ## Risu
 
-目标是 `D:/Projects/risu` 的 `127.0.0.1:6001`，插件标识为 `global-comfy-image`。先跑 `pnpm --filter @witch-paintbox/plugin-risu check`、`pnpm --filter @witch-paintbox/plugin-risu lint` 和 `pnpm test:risu`。从仓库根目录用现有更新脚本预览，`already-current` 表示已完成，无须关页。
+目标是 `/mnt/d/Projects/risu` 的 `127.0.0.1:6001`，插件标识为 `global-comfy-image`。先跑 `pnpm --filter @witch-paintbox/plugin-risu check`、`pnpm --filter @witch-paintbox/plugin-risu lint` 和 `pnpm test:risu`。从仓库根目录用现有更新脚本预览，`already-current` 表示已完成，无须关页。
 
-```powershell
-& ./packages/plugin-risu/skills/risu-plugin-update/scripts/update-local.ps1 -RisuRoot 'D:/Projects/risu'
+```bash
+node --experimental-strip-types packages/plugin-risu/skills/risu-plugin-update/scripts/update-local.ts --risu-root /mnt/d/Projects/risu
 ```
 
 如果需要更新，等用户确认已关闭 6001 上的 Risu 页面，包括其他标签页和设备。如果用户说的是停止 6001 服务，核对端口已停止监听。端口状态无法代替关页确认。收到确认后由 Codex 执行：
 
-```powershell
-& ./packages/plugin-risu/skills/risu-plugin-update/scripts/update-local.ps1 -RisuRoot 'D:/Projects/risu' -Apply -PageClosed
+```bash
+node --experimental-strip-types packages/plugin-risu/skills/risu-plugin-update/scripts/update-local.ts --risu-root /mnt/d/Projects/risu --apply --page-closed
 ```
 
 脚本会备份并校验，只替换目标插件代码和版本。报告 `updated` 或 `already-current`，有备份时附上路径，由用户重新打开 Risu。若脚本拒绝写入，读取仓库内的 `packages/plugin-risu/skills/risu-plugin-update/SKILL.md`。复制分发文件和写入已安装插件是两个操作。

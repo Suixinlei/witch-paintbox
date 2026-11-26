@@ -4,8 +4,11 @@
   "type": "module",
   "packageManager": "pnpm@11.25.0",
   "scripts": {
+    "setup:wsl": "node scripts/setup-wsl.mjs",
+    "check:wsl": "node scripts/check-wsl.mjs",
+    "test:environment": "node --test scripts/tests/*.test.mjs",
     "build": "pnpm -r --if-present run build",
-    "test": "pnpm build && pnpm test:sifang && pnpm test:service && pnpm test:sifang:browser && pnpm test:risu",
+    "test": "pnpm test:environment && pnpm build && pnpm test:sifang && pnpm test:service && pnpm test:sifang:browser && pnpm test:risu",
     "service": "node packages/server/index.mjs",
     "test:sifang": "pnpm --filter @witch-paintbox/plugin-sifang test",
     "test:service": "pnpm --filter @witch-paintbox/server test",

@@ -9,13 +9,13 @@ description: Use when maintaining 四方世界 character anchors (人员/角色)
 脚本走和管理台服务编辑器相同的 `GET/POST /v1/config` 路径：服务端校验 revision 后原子写文件并热更新内存快照，**无需重启服务**，保存即生效。
 所有命令输出单行 JSON；只读需要的字段，不要把整包配置或 base64 读进上下文。
 
-脚本（仓库根目录运行，Node 直接执行）：
+默认在 WSL2 的 `/mnt/d/Projects/witch-paintbox` 运行，使用 Linux 原生 Node；无需切回 Windows shell。脚本：
 
 ```
 node .agents/skills/sifang-library-maintenance/scripts/paintbox.mjs <命令>
 ```
 
-令牌自动从 `%LOCALAPPDATA%/WitchPaintbox/service.env` 读取，服务默认 `127.0.0.1:4783`。
+令牌自动从 Windows 的 `%LOCALAPPDATA%/WitchPaintbox/service.env`（WSL2 自动解析挂载路径，也可用 `PAINTBOX_ENV_FILE` 指定） 读取，服务默认 `127.0.0.1:4783`。
 
 ## 命令
 
@@ -50,9 +50,9 @@ node .agents/skills/sifang-library-maintenance/scripts/paintbox.mjs <命令>
   {"op":"remove-outfit","character":"笑斌","outfit":"旧服装"},
   {"op":"add-shared-outfit","outfit":{"name":"通用校服","tags":"..."}},
   {"op":"remove-shared-outfit","outfit":"通用校服"},
-  {"op":"add-character","character":{"name":"新角色","aliases":["别名"],"appearance":"...","negative":"","outfits":[{"name":"日常装","tags":"..."}],"selectedOutfitId":"日常装","portraitFile":"C:/path/portrait.png"}},
+  {"op":"add-character","character":{"name":"新角色","aliases":["别名"],"appearance":"...","negative":"","outfits":[{"name":"日常装","tags":"..."}],"selectedOutfitId":"日常装","portraitFile":"/mnt/c/path/portrait.png"}},
   {"op":"update-character","character":"笑斌","fields":{"appearance":"...","negative":"...","aliases":["..."]}},
-  {"op":"set-portrait","character":"笑斌","file":"C:/path/portrait.png"},
+  {"op":"set-portrait","character":"笑斌","file":"/mnt/c/path/portrait.png"},
   {"op":"clear-portrait","character":"笑斌"},
   {"op":"remove-character","character":"旧角色"}
 ]

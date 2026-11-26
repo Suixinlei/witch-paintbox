@@ -10,6 +10,6 @@
 
 plugin.js 是可导入 Risu 的单文件插件，plugin.js.map 用于调试，build.json 记录产物指纹。已导入存档的插件需在插件管理中重新导入。部署不会修改真实配置、资料、图片和任务。
 
-本地 Node 自托管实例可改用 [risu-plugin-update](skills/risu-plugin-update/SKILL.md)：运行 `./skills/risu-plugin-update/scripts/update-local.ps1` 只读预览；关闭本地 Risu 页面后加 `-Apply -PageClosed`，一条命令完成备份、更新和校验。不默认使用 computer use。
+本地 Node 自托管实例可改用 [risu-plugin-update](skills/risu-plugin-update/SKILL.md)：运行 `node --experimental-strip-types ./skills/risu-plugin-update/scripts/update-local.ts` 只读预览；关闭本地 Risu 页面后加 `--apply --page-closed`，一条命令完成备份、更新和校验。不默认使用 computer use。
 
 第一步资料抽取、第二步生图和 UI 在源码工程中独立分层，具体结构与当前命令见该工程 README.md；本目录其他文档为功能协议或历史记录。

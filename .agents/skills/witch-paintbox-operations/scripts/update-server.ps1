@@ -1,10 +1,11 @@
 ﻿[CmdletBinding()]
 param(
-    [string]$RepoRoot = (Join-Path $PSScriptRoot '../../../..'),
+    [string]$RepoRoot,
     [switch]$Apply
 )
 
 $ErrorActionPreference = 'Stop'
+if (-not $RepoRoot) { $RepoRoot = Join-Path $PSScriptRoot '../../../..' }
 $taskName = 'Witch Paintbox Local Service'
 $taskPath = '\'
 $installRoot = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'WitchPaintbox'))
@@ -85,9 +86,10 @@ try {
     $repo = (Resolve-Path -LiteralPath $RepoRoot).Path
     $stamp = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
     $release = Join-Path $installRoot ('app-monorepo-' + $stamp)
-    Invoke-Pnpm $repo @('install','--frozen-lockfile')
-    Invoke-Pnpm $repo @('--filter','@witch-paintbox/plugin-sifang','build')
-    Invoke-Pnpm $repo @('test:service')
+    # Source dependencies and build/test stay in WSL2. The release below has
+    # its own Windows production dependencies for the Windows scheduled task.
+    & wsl.exe --cd $repo -- bash -lc 'pnpm install --frozen-lockfile && pnpm --filter @witch-paintbox/plugin-sifang build && pnpm test:service'
+    if ($LASTEXITCODE -ne 0) { throw 'WSL2 构建或服务测试失败，原服务仍在运行。' }
     $files = @('package.json','pnpm-workspace.yaml','pnpm-lock.yaml','packages/plugin-risu/package.json',
         'packages/plugin-sifang/package.json','packages/plugin-sifang/manifest.json','packages/plugin-sifang/style.css')
     $files += Get-ChildItem -LiteralPath (Join-Path $repo 'packages/server') -File | Where-Object {

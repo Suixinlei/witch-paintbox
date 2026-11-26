@@ -6,7 +6,7 @@ Risu API 3.0 小说配图插件。本分支使用 NovelAI。正文完成后，�
 
 ## 开发与验证
 
-```powershell
+```bash
 cd packages/plugin-risu
 pnpm install
 pnpm exec playwright install chromium
@@ -24,7 +24,7 @@ pnpm deploy
 
 部署到其他 Risu 目录可运行 `pnpm deploy ../path/to/risu`。已导入存档的插件需在 Risu 插件管理中重新导入生成的 `plugin.js`；部署不修改真实存档或正在运行的任务。插件标识 `global-comfy-image` 和已有历史存储键继续兼容；旧图和资料可以继续查看。
 
-本地已安装插件也可使用随插件分发的 [risu-plugin-update skill](skills/risu-plugin-update/SKILL.md) 和 PowerShell 脚本，无须操作浏览器导入。默认只读预览；用户关闭本地页面后传 `-Apply -PageClosed`，自动备份、替换插件代码并校验其他数据未变。支持仅恢复插件代码的回滚。
+本地已安装插件也可使用随插件分发的 [risu-plugin-update skill](skills/risu-plugin-update/SKILL.md) 和 WSL2 下的 Node TypeScript 脚本，无须操作浏览器导入。默认只读预览；用户关闭本地页面后传 `--apply --page-closed`，自动备份、替换插件代码并校验其他数据未变。支持仅恢复插件代码的回滚。
 
 ## 模块职责
 
