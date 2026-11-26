@@ -28,6 +28,9 @@ node .agents/skills/sifang-library-maintenance/scripts/paintbox.mjs <命令>
   新角色或完全自定义用 `draw --positive <提示词> [--negative <提示词>] [--label 名]`（raw 模式不含画师串，需要时自己加）。
   返回 `{file, seed, width, height, historyId}`，图片落在临时目录，把 file 给用户看。
 - `apply <ops.json>` —— 按操作数组改配置并写回服务。本地先用仓库 `parseArchive` 校验，失败不写入；revision 冲突返回 409，重新 list/show 再改。
+- `archive <角色名或id...>` —— 把角色连同服装与人设图归档出库，存入 skill 目录 `archive/anchors-archive.json`，并从服务配置移除（免重启，可 restore）。长期不登场的人物用这个，不要用 `remove-character` 硬删。
+- `restore <角色名或id...>` —— 从归档装回服务配置（含人设图），别名与本名冲突会报错。
+- `archived` —— 列出当前归档中的角色。
 
 ## 工作流
 
@@ -35,6 +38,9 @@ node .agents/skills/sifang-library-maintenance/scripts/paintbox.mjs <命令>
 2. **人物与服装分离**：appearance 只放固定特征（版权角色名、发色发型、瞳色、肤色、体型、种族等）；服装 tags 只放衣着与配饰，**不含武器**，也**不含背景/场景**。
    武器、表情、动作、场景留给当轮生图（预览时可放进 `--extra`），不要写进 appearance 或服装 tags。新增服装不得包含人物 appearance。
 3. 新服装/新角色**先出图确认**：`draw` 生成预览（新服装用 `--tags` 传未保存的 tags），把图片给用户确认。
+   人设图（默认立绘）必须**正视图、平视机位**：人物面向镜头站姿，可略微转头，禁止俯视/仰视/侧背/前倾等特殊大角度。
+   出图时 positive 加 `front view, facing viewer, eye-level, straight-on angle`，negative 加 `from side, from behind, from above, from below, high angle view, low angle view, foreshortening`。
+   定稿人设图复制到 `/mnt/c/Users/joshu/Downloads/<角色名>-人设图.png` 供用户上传，`portraitFile`/`set-portrait` 用该文件。
 4. **画图不能并发**：一次只跑一个 `draw`，等它返回再跑下一个。脚本有临时锁，服务生图队列本身也串行（并发会排队），但仍不要并行发起。
 5. 用户确认后写 ops.json 并 `apply`。新角色人设图：先 `draw` 确认，再在 `add-character` 里用 `portraitFile` 指向该图，或单独 `set-portrait`。
 6. `apply` 返回 `{ok, revision, changed}` 即成功，免重启。向用户报告改了什么。

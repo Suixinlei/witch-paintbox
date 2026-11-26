@@ -13,7 +13,7 @@ description: 只读提取本机 Risu 角色卡描述与世界书，在魔女画�
 - 目标是魔女画匣 `http://127.0.0.1:4783` 的 **Risu 单卡资料**。用 `card.chaId` 关联两边，卡名可能重复。服务 `risu.json` 中的 `library.anchors` 按卡隔离；全局 `settings.wp.data.anchors` 属于另一份库，字段相同不意味着自动共享。
 - 通过管理员 API 读写：`GET /v1/admin/risu`、`POST /v1/admin/risu/card` 和 `POST /v1/admin/risu/cards`。服务原子保存并热更新；维护资料无需重启、无需关闭 Risu，也不会写回 Risu 原卡。
 - 管理员令牌从 Windows 的 `%LOCALAPPDATA%/WitchPaintbox/service.env`（WSL2 自动解析挂载路径，也可用 `PAINTBOX_ENV_FILE` 指定） 自动读取。Risu 专用令牌不能编辑资料。不要打印密钥、整库或人设图 base64。
-- **Risu 与四方相同：先准备并显示 summary，只有用户点击该条「生图」才请求图片。维护人物、服装不代表启用自动出图，也不要为验证资料自动生成图片。** 用户要求预览时才执行对应绘图请求。
+- **Risu 与四方相同：先准备并显示 summary，只有用户点击该条「生图」才请求图片。维护人物、服装不代表启用自动出图，也不要为验证资料自动生成图片。** 用户要求预览时才执行对应绘图请求。**加人批次例外**（risu-academy-add-character 标准路线）：新角色人设图必须由助手通过本技能 draw 流程先生成、交用户过目，图过才写卡——属该批次授权生图，不适用「等用户点『生图』」。
 
 ## 读取角色卡
 

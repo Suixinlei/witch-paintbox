@@ -6,6 +6,10 @@ Windows 路径在 WSL2 内转换为 `/mnt/<盘符>/...`。使用 WSL2 内安装�
 
 仅当操作必须访问 Windows 原生能力（如计划任务、本机 Windows 服务部署、Windows 应用或现有 `.ps1` 运维脚本）时，按对应技能使用 Windows 工具；其余工作继续在 WSL2 中完成。若 WSL2 不可用，明确说明具体阻碍。
 
+# 默认角色卡
+
+用户提到卡、加人、删人、条目、世界书、xp 等而不加定语时，默认指《学园重生》卡（chaId `c699b607-5be7-4a2f-9749-8304a53b3231`），不是《调教学园》（조교 아카데미）或其他卡。`add_character.py` 的脚本默认目标仍是「调教学园」，操作这张卡要显式传 `--card 学园重生`。
+
 # 项目参考资料
 
 查找服装 preset、配饰、构图或组合提示词时，使用 [witch-paintbox-reference-search](.agents/skills/witch-paintbox-reference-search/SKILL.md)；它提供有限候选搜索和按来源 ID 展开的只读脚本，避免把全部资料读入上下文。

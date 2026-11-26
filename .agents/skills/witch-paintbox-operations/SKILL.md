@@ -28,13 +28,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w .agents/sk
 
 ## Risu
 
+用户指定 IAB 页面用于调试时，可自行操作该调试页，更新前关闭、更新后重开并实机验收，无须每次再询问关页授权。此授权不扩展到用户在 Edge 等其他浏览器使用的页面。
+
 目标是 `/mnt/d/Projects/risu` 的 `127.0.0.1:6001`，插件标识为 `global-comfy-image`。先跑 `pnpm --filter @witch-paintbox/plugin-risu check`、`pnpm --filter @witch-paintbox/plugin-risu lint` 和 `pnpm test:risu`。从仓库根目录用现有更新脚本预览，`already-current` 表示已完成，无须关页。
 
 ```bash
 node --experimental-strip-types packages/plugin-risu/skills/risu-plugin-update/scripts/update-local.ts --risu-root /mnt/d/Projects/risu
 ```
 
-如果需要更新，等用户确认已关闭 6001 上的 Risu 页面，包括其他标签页和设备。如果用户说的是停止 6001 服务，核对端口已停止监听。端口状态无法代替关页确认。收到确认后由 Codex 执行：
+需要更新时，先通过可用的浏览器标签页清单只读检查本机 Risu 页面（6001，包含 localhost、回环地址及已知别名），不要默认直接要求用户关页。检查覆盖完整、未发现目标页面，且没有已知其他设备仍在使用的证据时，可继续安装。发现页面仍开着时说明具体页面；没有关闭授权就请用户关闭。检查不可用或覆盖不完整时，说明缺口再请用户确认。用户已明确确认关闭时直接沿用，不重复检查或询问；不因假设还有其他设备而追加确认。端口状态和存档静默期不能证明页面关闭；不要自动关闭或重新打开页面。完成检查或已有用户确认后由 Codex 执行：
 
 ```bash
 node --experimental-strip-types packages/plugin-risu/skills/risu-plugin-update/scripts/update-local.ts --risu-root /mnt/d/Projects/risu --apply --page-closed

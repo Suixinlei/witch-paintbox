@@ -278,6 +278,11 @@ async function cmdApply(file) {
       default: fail(`未知操作：${op?.op}`);
     }
   }
+  const revision = await savePortable(portable, manifest, blobs);
+  console.log(JSON.stringify({ ok: true, revision, changed: done }));
+}
+
+async function savePortable(portable, manifest, blobs) {
   const source = JSON.stringify(portable);
   try {
     const archive = parseArchive(source);
@@ -285,10 +290,66 @@ async function cmdApply(file) {
   } catch (error) { fail(`本地校验失败（未写入）：${error.message}`); }
   const body = packet({ ...manifest, revision: manifest.revision }, [new Blob([source]), ...blobs.slice(1)]);
   const response = await request('/v1/config', { method: 'POST', type: PACKET_TYPE, body, timeout: 120000 });
-  if (response.status === 409) fail('服务配置已被另一端更新（409 冲突）。请重新 list/show 读取后再 apply。');
+  if (response.status === 409) fail('服务配置已被另一端更新（409 冲突）。请重新 list/show 读取后再试。');
   if (!response.ok) fail(`写入失败：${await errorOf(response)}`);
-  const { revision } = await response.json();
-  console.log(JSON.stringify({ ok: true, revision, changed: done }));
+  return (await response.json()).revision;
+}
+
+const ARCHIVE_FILE = join(scriptDir, '..', 'archive', 'anchors-archive.json');
+
+async function readArchive() {
+  try { return JSON.parse(await readFile(ARCHIVE_FILE, 'utf8')); }
+  catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+}
+
+async function writeArchive(entries) {
+  await mkdir(dirname(ARCHIVE_FILE), { recursive: true });
+  await writeFile(ARCHIVE_FILE, JSON.stringify(entries, null, 1));
+}
+
+async function cmdArchived() {
+  const entries = await readArchive();
+  const rows = entries.map(e => ({ name: e.anchor.name, archivedAt: e.archivedAt, outfits: e.anchor.outfits.map(o => o.name), portrait: Boolean(e.anchor.portrait) }));
+  console.log(JSON.stringify({ count: entries.length, archived: rows }));
+}
+
+async function cmdArchive(keys) {
+  const { manifest, blobs, portable } = await readConfig();
+  const entries = await readArchive();
+  const done = [];
+  for (const key of keys) {
+    const anchor = anchorBy(portable, key);
+    if (!anchor) fail(`找不到角色：${key}`);
+    if (entries.some(e => e.anchor.name === anchor.name || e.anchor.id === anchor.id)) fail(`已在归档中：${anchor.name}`);
+    entries.push({ archivedAt: new Date().toISOString(), anchor });
+    portable.data.anchors = portable.data.anchors.filter(a => a !== anchor);
+    done.push(anchor.name);
+  }
+  const revision = await savePortable(portable, manifest, blobs);
+  await writeArchive(entries);
+  console.log(JSON.stringify({ ok: true, revision, archived: done, total: entries.length }));
+}
+
+async function cmdRestore(keys) {
+  const { manifest, blobs, portable } = await readConfig();
+  const entries = await readArchive();
+  const done = [];
+  for (const key of keys) {
+    const index = entries.findIndex(e => e.anchor.name === key || e.anchor.id === key);
+    if (index < 0) fail(`归档中没有：${key}`);
+    const anchor = entries[index].anchor;
+    if (anchorBy(portable, anchor.name) || anchorBy(portable, anchor.id)) fail(`角色已存在：${anchor.name}`);
+    for (const alias of anchor.aliases ?? []) {
+      const clash = portable.data.anchors.find(a => (a.aliases ?? []).includes(alias));
+      if (clash && clash.name !== anchor.name) fail(`别名冲突：${alias} 已被 ${clash.name} 使用`);
+    }
+    portable.data.anchors.push(anchor);
+    entries.splice(index, 1);
+    done.push(anchor.name);
+  }
+  const revision = await savePortable(portable, manifest, blobs);
+  await writeArchive(entries);
+  console.log(JSON.stringify({ ok: true, revision, restored: done, total: entries.length }));
 }
 
 function parseArgs(argv) {
@@ -312,5 +373,8 @@ try {
   else if (command === 'portrait') { if (!positional[0]) fail('用法：portrait <角色名或id> [--file 路径]'); await cmdPortrait(positional[0], opts.file); }
   else if (command === 'draw') await cmdDraw(opts);
   else if (command === 'apply') { if (!positional[0]) fail('用法：apply <ops.json>'); await cmdApply(positional[0]); }
-  else fail('未知命令。可用：list / show / portrait / draw / apply');
+  else if (command === 'archive') { if (!positional.length) fail('用法：archive <角色名或id...>'); await cmdArchive(positional); }
+  else if (command === 'restore') { if (!positional.length) fail('用法：restore <角色名或id...>'); await cmdRestore(positional); }
+  else if (command === 'archived') await cmdArchived();
+  else fail('未知命令。可用：list / show / portrait / draw / apply / archive / restore / archived');
 } catch (error) { fail(error?.message ?? error); }
