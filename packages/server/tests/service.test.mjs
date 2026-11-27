@@ -302,11 +302,11 @@ test('standalone service plans once, returns a binary image once and keeps histo
     calls.push({ url: req.url, body, key: req.headers.authorization });
     let output;
     if (req.url === '/v1/chat/completions') {
-      const input = body.messages.find(message => message.role === 'user').content;
+      const input = JSON.stringify(body.tools);
       const points = Array.from(input.matchAll(/【插入点 (P\d+)】/g), match => match[1]);
       const rows = [{ at: points[0], summary: '庭院', prompt: '@角色, moonlit courtyard' }];
       if (plansTwo) rows.push({ at: points[1] ?? points[0], summary: '第二张配图', prompt: secondPrompt });
-      output = { choices: [{ message: { content: JSON.stringify(emptyPlan ? [] : rows) } }] };
+      output = { choices: [{ message: { tool_calls: [{ type: 'function', function: { name: 'emit_witch_paintbox_plan', arguments: JSON.stringify({ plan_json: JSON.stringify(emptyPlan ? [] : rows) }) } }] } }] };
     } else {
       if (finishedDrawAt !== undefined) drawIntervals.push(performance.now() - finishedDrawAt);
       peakDraws = Math.max(peakDraws, ++activeDraws);
@@ -435,12 +435,12 @@ test('standalone service plans once, returns a binary image once and keeps histo
     assert.equal(calls[0].key, 'Bearer fixture-model-key');
     assert.equal(calls[0].body.model, 'fixture-model');
     assert.equal(calls[0].body.stream, false);
-    assert.deepEqual(calls[0].body.messages.map(message => message.role), ['system', 'user']);
-    assert.match(calls[0].body.messages[0].content, /GLOBAL_COURTYARD_LIGHTING/);
-    assert.doesNotMatch(calls[0].body.messages[0].content, /UNMATCHED_OCEAN_LIGHTING/);
-    assert.match(calls[0].body.messages.at(-1).content, /blue coat/);
-    assert.match(calls[0].body.messages.at(-1).content, /Return only the requested JSON\./);
-    assert.match(calls[0].body.messages.map(message => message.content).join('\n'), /@position\(x,y\)/);
+    assert.equal(calls[0].body.tools[0].function.name, 'emit_witch_paintbox_plan');
+    assert.match(JSON.stringify(calls[0].body.tools), /GLOBAL_COURTYARD_LIGHTING/);
+    assert.doesNotMatch(JSON.stringify(calls[0].body.tools), /UNMATCHED_OCEAN_LIGHTING/);
+    assert.match(JSON.stringify(calls[0].body.tools), /blue coat/);
+    assert.match(JSON.stringify(calls[0].body.tools), /Return only the requested JSON\./);
+    assert.match(JSON.stringify(calls[0].body.tools), /@position\(x,y\)/);
 
     const markerKey = JSON.stringify(['scope', 'chat', 'floor', parseImageMarkers(result.text)[0].raw, 1, 0]);
     const response = await send('images', {
@@ -608,7 +608,7 @@ test('standalone service plans once, returns a binary image once and keeps histo
       const { appearance } = record.library.people[0];
       assert.equal(calls[start + 1].body.input,
         `${index === 0 ? 'black ink wash' : 'global brushwork'}, ${appearance}, moonlit courtyard`);
-      const context = calls[start].body.messages.map(message => message.content).join('\n');
+      const context = JSON.stringify(calls[start].body.tools);
       assert.ok(context.includes(record.library.people[0].appearance));
       assert.ok(context.includes(record.card.desc));
       assert.ok(!context.includes(records[1 - index].library.people[0].appearance));
@@ -623,14 +623,14 @@ test('standalone service plans once, returns a binary image once and keeps histo
     const skipped = await send('plan', request('card-0'), risu);
     assert.equal(skipped.status, 200);
     assert.deepEqual((await unpack(await skipped.blob())).value.added, []);
-    assert.match(calls.at(-1).body.messages.map(message => message.content).join('\n'), /可跳过配图/);
+    assert.match(JSON.stringify(calls.at(-1).body.tools), /可跳过配图/);
     const manual = request('card-0');
     manual.risu.automatic = false;
     const missing = await send('plan', manual, risu);
     assert.equal(missing.status, 422);
     assert.match((await missing.json()).error, /保留原有图片/);
-    assert.match(calls.at(-1).body.messages.map(message => message.content).join('\n'), /选取 1 至 1 个场景/);
-    assert.doesNotMatch(calls.at(-1).body.messages.map(message => message.content).join('\n'), /可跳过配图/);
+    assert.match(JSON.stringify(calls.at(-1).body.tools), /选取 1 至 1 个场景/);
+    assert.doesNotMatch(JSON.stringify(calls.at(-1).body.tools), /可跳过配图/);
     emptyPlan = false;
     await stop();
     await start();
@@ -691,7 +691,7 @@ test('DeepSeek thinking control is explicit and limited to the official service 
   const requests = [];
   t.mock.method(globalThis, 'fetch', async (_url, { body }) => {
     requests.push(JSON.parse(body));
-    return Response.json({ choices: [{ message: { content: '[]' } }] });
+    return Response.json({ choices: [{ message: { tool_calls: [{ function: { name: 'emit_witch_paintbox_plan', arguments: '{"plan_json":"[]"}' } }] } }] });
   });
   const defaults = { ...defaultModelSettings(), mode: 'custom', url: 'https://api.deepseek.com', model: 'deepseek-flash', transport: 'nonstream' };
   const { thinkingMode: _absent, ...legacy } = defaults;
@@ -710,45 +710,46 @@ test('DeepSeek thinking control is explicit and limited to the official service 
   ]);
 });
 
-test('DeepSeek JSON output requests an object and preserves insertion validation', async t => {
+test('Legacy JSON output settings use ToolCall and preserve insertion validation', async t => {
   const plan = createImageInsertionPlan('信使走上石桥。\n\n薄雾浮在河面。');
   const rows = [{ at: plan.points[0].id, summary: '石桥', prompt: 'a stone bridge in the fog' }];
   const wrapped = JSON.stringify({ images: rows });
   let request;
   t.mock.method(globalThis, 'fetch', async (_url, { body }) => {
     request = JSON.parse(body);
-    return Response.json({ choices: [{ message: { content: wrapped } }] });
+    return Response.json({ choices: [{ message: { tool_calls: [{ function: { name: 'emit_witch_paintbox_plan', arguments: JSON.stringify({ plan_json: wrapped }) } }] } }] });
   });
   const settings = { ...defaultModelSettings(), mode: 'custom', url: 'https://api.deepseek.com', model: 'deepseek-flash',
     transport: 'nonstream', jsonOutput: true };
   const signal = new AbortController().signal;
   const messages = [{ role: 'system', content: 'Return an array of illustrations.' }];
   const answer = await requestServiceModel(settings, messages, signal);
-  assert.deepEqual(request.response_format, { type: 'json_object' });
+  assert.equal(request.response_format, undefined);
+  assert.equal(request.tool_choice, 'required');
   assert.equal(request.stream, false);
-  assert.match(request.messages.at(-1).content, /JSON 对象.*images/);
+  assert.match(JSON.stringify(request.tools), /Return an array of illustrations/);
   assert.equal(validateAllModelSettings(settings).api.jsonOutput, true);
   assert.deepEqual(applyImageInsertions(plan, answer), applyImageInsertions(plan, JSON.stringify(rows)));
   assert.deepEqual(applyImageInsertions(plan, JSON.stringify({ images: rows, text: '改写' })), applyImageInsertions(plan, JSON.stringify(rows)), 'extra model metadata cannot rewrite the original text');
   assert.throws(() => applyImageInsertions(plan, '{"images":{} }'), /images/);
   await requestServiceModel({ ...settings, url: 'https://compatible.example.test' }, messages, signal);
   assert.equal(request.response_format, undefined);
-  assert.deepEqual(request.messages, messages);
+  assert.equal(request.tools[0].function.name, 'emit_witch_paintbox_plan');
   await requestServiceModel({ ...settings, transport: 'toolcall' }, messages, signal);
   assert.equal(request.response_format, undefined);
 });
 
-test('GLM thinking maps to reasoning_effort and JSON output requests an object', async t => {
+test('GLM thinking maps to reasoning_effort and legacy JSON settings use ToolCall', async t => {
   const requests = [];
   t.mock.method(globalThis, 'fetch', async (_url, { body }) => {
     requests.push(JSON.parse(body));
-    return Response.json({ choices: [{ message: { content: '{"images":[]}' } }] });
+    return Response.json({ choices: [{ message: { tool_calls: [{ function: { name: 'emit_witch_paintbox_plan', arguments: '{"plan_json":"[]"}' } }] } }] });
   });
   const base = { ...defaultModelSettings(), mode: 'custom', url: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-5.3-flash', transport: 'nonstream' };
   const signal = new AbortController().signal;
   const messages = [{ role: 'user', content: 'Return an empty images object.' }];
   for (const settings of [base, { ...base, thinkingMode: 'low' }, { ...base, thinkingMode: 'off' }]) {
-    assert.equal(await requestServiceModel(settings, messages, signal), '{"images":[]}');
+    assert.equal(await requestServiceModel(settings, messages, signal), '[]');
   }
   // GLM-5.3-Flash always thinks and rejects { type: 'disabled' }, so "off" and "low" both use the lightest effort and "default" leaves it unset.
   assert.deepEqual(requests.map(request => [request.thinking, request.reasoning_effort]), [
@@ -756,10 +757,50 @@ test('GLM thinking maps to reasoning_effort and JSON output requests an object',
   ]);
   requests.length = 0;
   await requestServiceModel({ ...base, jsonOutput: true }, messages, signal);
-  assert.deepEqual(requests[0].response_format, { type: 'json_object' });
-  assert.match(requests[0].messages.at(-1).content, /JSON 对象.*images/);
+  assert.equal(requests[0].response_format, undefined);
+  assert.equal(requests[0].tool_choice, 'required');
+  assert.match(JSON.stringify(requests[0].tools), /Return an empty images object/);
   await requestServiceModel({ ...base, jsonOutput: true, url: 'https://compatible.example.test' }, messages, signal);
   assert.equal(requests[1].response_format, undefined);
+});
+
+test('all transports prefer tool arguments, preserve text fallback and keep tools on gateway retry', async t => {
+  const settings = { ...defaultModelSettings(), mode: 'custom', url: 'https://compatible.example.test', model: 'test-model', jsonOutput: true };
+  const signal = new AbortController().signal;
+  const messages = [{ role: 'user', content: 'Generate illustration plans.' }];
+  let respond;
+  const requests = [];
+  t.mock.method(globalThis, 'fetch', async (_url, { body }) => {
+    const request = JSON.parse(body);
+    requests.push(request);
+    assert.equal(request.tools[0].function.name, 'emit_witch_paintbox_plan');
+    assert.equal(request.response_format, undefined);
+    return respond(request);
+  });
+  const tool = { name: 'emit_witch_paintbox_plan', arguments: JSON.stringify({ plan_json: '[]' }) };
+  for (const transport of ['nonstream', 'stream', 'compatible', 'toolcall']) {
+    const response = payload => transport === 'stream'
+      ? new Response(`data: ${JSON.stringify(payload)}\n\ndata: [DONE]\n\n`, { headers: { 'Content-Type': 'text/event-stream' } })
+      : Response.json(payload);
+    respond = () => response({ choices: [{ message: { content: 'ignore narration', tool_calls: [{ function: tool }] } }] });
+    assert.equal(await requestServiceModel({ ...settings, transport }, messages, signal), '[]');
+    respond = () => response({ choices: [{ message: { content: '[]' } }] });
+    assert.equal(await requestServiceModel({ ...settings, transport }, messages, signal), '[]');
+  }
+  const args = JSON.stringify({ plan_json: '[{"summary":"桥上等候"}]' });
+  const events = [
+    { choices: [{ delta: { content: '先阅读正文' } }] },
+    ...Array.from(args, fragment => ({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: fragment } }] } }] })),
+    { choices: [{ delta: { content: '忽略工具之后的说明' } }] },
+  ];
+  respond = () => new Response(events.map(event => `data: ${JSON.stringify(event)}\n\n`).join('') + 'data: [DONE]\n\n');
+  assert.equal(await requestServiceModel({ ...settings, transport: 'stream' }, messages, signal), '[{"summary":"桥上等候"}]');
+  requests.length = 0;
+  respond = request => request.tool_choice === 'required' ? new Response('', { status: 400 })
+    : Response.json({ choices: [{ message: { content: '[]' } }] });
+  assert.equal(await requestServiceModel({ ...settings, transport: 'nonstream' }, messages, signal), '[]');
+  assert.deepEqual(requests.map(request => request.tool_choice), ['required', 'auto']);
+  assert.deepEqual(requests[0].tools, requests[1].tools);
 });
 
 test('NovelAI retries a failed TLS handshake with the same payload and never repeats an ambiguous reset', async t => {

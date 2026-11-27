@@ -23,9 +23,9 @@ const upstream = createServer(async (req, res) => {
   let output;
   if (req.url.endsWith('/chat/completions')) {
     if (pausePlan) await pausePlan();
-    const input = body.messages.find(message => message.role === 'user').content;
+    const input = JSON.stringify(body.tools);
     const at = /【插入点 (P\d+)】/.exec(input)[1];
-    output = { choices: [{ message: { content: JSON.stringify([{ at, summary: '庭院', prompt: 'garden' }]) } }] };
+    output = { choices: [{ message: { tool_calls: [{ type: 'function', function: { name: 'emit_witch_paintbox_plan', arguments: JSON.stringify({ plan_json: JSON.stringify([{ at, summary: '庭院', prompt: 'garden' }]) }) } }] } }] };
   } else {
     if (pauseDraw) await pauseDraw();
     res.writeHead(200, { 'Content-Type': 'image/jpeg' }).end(photo);
@@ -128,7 +128,7 @@ try {
   await modelFields.locator('[data-model-field="url"]').fill('https://api.deepseek.com');
   await thinkingMode.selectOption('off');
   const jsonOutput = modelFields.locator('[data-model-field="jsonOutput"]');
-  await jsonOutput.selectOption('json_object');
+  assert.equal(await jsonOutput.count(), 0);
   const savedThinking = admin.waitForResponse(response => response.url() === service + '/v1/config' && response.request().method() === 'POST');
   await modelFields.locator('[data-model-action="save-model"]').click();
   assert.ok((await savedThinking).ok());
@@ -136,10 +136,10 @@ try {
   await admin.reload();
   await thinkingMode.waitFor();
   assert.equal(await thinkingMode.inputValue(), 'off');
-  assert.equal(await jsonOutput.inputValue(), 'json_object');
+  assert.equal(await jsonOutput.count(), 0);
   await modelFields.locator('[data-model-field="url"]').fill(origin(upstream) + '/v1');
   assert.ok(await thinkingMode.isHidden());
-  assert.ok(await jsonOutput.isHidden());
+  assert.equal(await jsonOutput.count(), 0);
   await modelFields.locator('[data-model-field="model"]').fill('fixture-local-model');
   await modelFields.locator('[data-model-action="save-model"]').click();
   await modelFields.locator('[data-model-status]').filter({ hasText: /^已保存。$/ }).waitFor();

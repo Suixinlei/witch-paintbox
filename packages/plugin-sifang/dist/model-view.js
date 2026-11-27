@@ -205,12 +205,6 @@ export function modelSettingsView(settings, state) {
         <select data-model-field="thinkingMode">${options([
         { value: 'default', label: '跟随模型' }, { value: 'off', label: '关闭思考' }, { value: 'low', label: '低强度思考' },
     ], settings.thinkingMode ?? 'default')}</select>
-      </label>
-      <label class="config-field channel-field" data-json-control${settings.mode === 'custom' && thinkingProvider(settings.url) !== null && settings.transport !== 'toolcall' ? '' : ' hidden'}>
-        <span>配图响应格式</span>
-        <select data-model-field="jsonOutput">${options([
-        { value: 'text', label: '默认文本' }, { value: 'json_object', label: 'JSON 对象（json_object）' },
-    ], settings.jsonOutput ? 'json_object' : 'text')}</select>
       </label>` : ''}
       <div class="parameter-group"><h3 class="subsection-title">回复参数</h3><div class="parameter-grid model-parameters">
         <label class="config-field"><span>最大回复长度 · max tokens</span>
@@ -221,11 +215,10 @@ export function modelSettingsView(settings, state) {
         </label>
         <label class="config-field"><span>请求方式</span>
           <select data-model-field="transport">${options([
-        { value: 'nonstream', label: '非流式' },
-        { value: 'stream', label: '流式' },
-        { value: 'compatible', label: '假流兼容' },
-        { value: 'toolcall', label: 'ToolCall 结构化' },
-    ], settings.transport)}</select>
+        { value: 'nonstream', label: 'ToolCall · 非流式' },
+        { value: 'stream', label: 'ToolCall · 流式' },
+        { value: 'compatible', label: 'ToolCall · 假流兼容' },
+    ], settings.transport === 'toolcall' ? 'compatible' : settings.transport)}</select>
         </label>
       </div></div>
       ${state.inlineWorldbooks ? `<div class="model-save-line"><button type="button" class="text-button" data-model-action="save-model">保存模型配置</button><p class="config-status" data-model-status role="status"></p></div>` : ''}

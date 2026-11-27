@@ -738,9 +738,6 @@ export class ModelConfig {
                     else
                         settings.thinkingMode = 'default';
                     break;
-                case 'jsonOutput':
-                    settings.jsonOutput = input.value === 'json_object';
-                    break;
                 case 'transport':
                     if (['nonstream', 'stream', 'compatible', 'toolcall'].includes(input.value))
                         settings.transport = input.value;
@@ -749,11 +746,8 @@ export class ModelConfig {
             if (field === 'url' || field === 'mode' || field === 'transport') {
                 const provider = settings.mode === 'custom' ? thinkingProvider(settings.url) : null;
                 const thinking = this.container?.querySelector('[data-thinking-control]');
-                const json = this.container?.querySelector('[data-json-control]');
                 if (thinking)
                     thinking.hidden = provider === null;
-                if (json)
-                    json.hidden = provider === null || settings.transport === 'toolcall';
             }
             if (field === 'url' || field === 'key' || field === 'mode') {
                 this.refresh?.abort();

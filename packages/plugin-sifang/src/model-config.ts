@@ -615,16 +615,13 @@ export class ModelConfig {
           if (input.value === 'off' || input.value === 'low') settings.thinkingMode = input.value;
           else settings.thinkingMode = 'default';
           break;
-        case 'jsonOutput': settings.jsonOutput = input.value === 'json_object'; break;
         case 'transport':
           if (['nonstream', 'stream', 'compatible', 'toolcall'].includes(input.value)) settings.transport = input.value as ModelSettings['transport']; break;
       }
       if (field === 'url' || field === 'mode' || field === 'transport') {
         const provider = settings.mode === 'custom' ? thinkingProvider(settings.url) : null;
         const thinking = this.container?.querySelector<HTMLElement>('[data-thinking-control]');
-        const json = this.container?.querySelector<HTMLElement>('[data-json-control]');
         if (thinking) thinking.hidden = provider === null;
-        if (json) json.hidden = provider === null || settings.transport === 'toolcall';
       }
       if (field === 'url' || field === 'key' || field === 'mode') {
         this.refresh?.abort(); this.refresh = null; this.syncRefresh();

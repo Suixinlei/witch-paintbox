@@ -5,7 +5,7 @@ export type ModelThinkingMode = typeof MODEL_THINKING_MODES[number];
 
 export type ModelThinkingProvider = 'deepseek' | 'glm';
 
-/** Endpoints whose thinking / JSON-output controls this extension knows how to drive. */
+/** Endpoints whose thinking controls this extension knows how to drive. */
 export function thinkingProvider(address: string): ModelThinkingProvider | null {
   try {
     const url = new URL(address.trim());
@@ -29,6 +29,7 @@ export interface ModelApiSettings {
   temperature: number;
   transport: ModelTransport;
   thinkingMode?: ModelThinkingMode;
+  /** Legacy import field; illustration plans always use ToolCall. */
   jsonOutput?: boolean;
 }
 

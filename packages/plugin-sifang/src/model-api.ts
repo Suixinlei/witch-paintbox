@@ -335,24 +335,21 @@ async function readCompletion(response: Response, mode: ModelTransport, options:
   const consumePayload = (payload: JsonRecord) => {
     const choice = first(payload.choices);
     if (typeof choice.index === 'number' && choice.index > 0) return;
-    if (mode === 'toolcall') {
-      const toolSnapshot = toolCallSnapshot(payload);
-      if (toolSnapshot.trim()) { hasToolData = true; update(toolSnapshot); return; }
-      const toolDelta = toolCallDelta(payload);
-      if (toolDelta) {
-        hasToolData = true;
-        toolArgsRaw += toolDelta;
-        const extracted = extractPlanJsonFromArgs(toolArgsRaw);
-        if (extracted) update(extracted);
-        return;
-      }
-      // Once the plan arrives through tool arguments, ignore any narration in content.
-      if (hasToolData) return;
+    const toolSnapshot = toolCallSnapshot(payload);
+    if (toolSnapshot.trim()) { hasToolData = true; update(toolSnapshot); return; }
+    const toolDelta = toolCallDelta(payload);
+    if (toolDelta) {
+      hasToolData = true;
+      toolArgsRaw += toolDelta;
+      const extracted = extractPlanJsonFromArgs(toolArgsRaw);
+      if (extracted) update(extracted);
+      return;
     }
+    // Tool arguments take precedence over ordinary content, including earlier narration.
+    if (hasToolData) return;
     const snapshot = contentText(record(choice.message).content)
       || contentText(payload.content) || contentText(record(payload.message).content)
       || contentText(record(payload.responseContent).parts) || contentText(payload.text);
-    // Like folkloreTransport, an empty terminal snapshot must not erase received text.
     if (snapshot.trim()) { update(snapshot); return; }
     const delta = record(payload.delta);
     update(text + (contentText(record(choice.delta).content) || contentText(choice.text)
@@ -428,7 +425,7 @@ async function readCompletion(response: Response, mode: ModelTransport, options:
     options.signal?.throwIfAborted();
     if (protocol === 'json') consumePayloads(buffer);
     if (!text.trim() && toolArgsRaw.trim()) update(extractPlanJsonFromArgs(toolArgsRaw) || toolArgsRaw.trim());
-    if (!text.trim()) throw new ModelApiError('模型接口没有返回文本正文。');
+    if (!text.trim()) throw new ModelApiError('模型接口没有返回配图工具调用或文本正文。');
     if (mode !== 'stream' && mode !== 'toolcall') options.onText?.(text);
     return text;
   } finally {
@@ -461,16 +458,12 @@ export async function requestServiceModel(settings: ModelApiSettings, messages: 
   if (!model) throw new ModelApiError('请为独立服务配置模型名称。', 'setup');
   const { custom_url } = customConnection(settings);
   const key = settings.key.trim().replace(/^Bearer\s+/i, '');
-  const envelope = settings.transport === 'toolcall' ? buildToolCallEnvelope(messages) : null;
+  const envelope = buildToolCallEnvelope(messages);
   const hostname = new URL(String(custom_url)).hostname;
   const local = ['127.0.0.1', 'localhost', '[::1]'].includes(hostname);
   const disableThinking = local && model === 'huihui-ai/huihui-qwen3.8-27b-abliterated';
   const provider = thinkingProvider(String(custom_url));
-  const jsonOutput = provider !== null && settings.jsonOutput && !envelope;
-  const wireMessages = envelope?.messages ?? (local ? localTemplateMessages(messages) : jsonOutput ? [...messages, {
-    role: 'user',
-    content: '最终输出格式：只返回一个 JSON 对象。把前面要求的配图数组放进 images 字段，例如 {"images":[{"at":"P001","summary":"桥上等候","prompt":"a messenger on a misty stone bridge"}]}。示例仅用于说明结构；使用正文中实际可用的插入点。数组条目的字段、提示词、画幅与数量要求保持有效。如果前面的规则允许返回零张，返回 {"images":[]}。不要添加 Markdown 围栏、解释或正文。',
-  }] : messages);
+  const wireMessages = envelope.messages;
   const thinking = provider ? settings.thinkingMode : undefined;
   // GLM-5.3-Flash always thinks and rejects { type: 'disabled' }; its lightest effort is the floor for "off".
   const thinkingOptions = provider === 'deepseek'
@@ -483,9 +476,8 @@ export async function requestServiceModel(settings: ModelApiSettings, messages: 
       model, messages: wireMessages, stream: settings.transport !== 'nonstream',
       max_tokens: settings.maxTokens, temperature: settings.temperature,
       ...thinkingOptions,
-      ...(jsonOutput ? { response_format: { type: 'json_object' } } : {}),
       ...(disableThinking ? { reasoning_effort: 'none', chat_template_kwargs: { enable_thinking: false } } : {}),
-      ...(envelope ? { tools: envelope.tools, tool_choice: 'required' } : {}),
+      tools: envelope.tools, tool_choice: 'required',
     };
     const send = (body: JsonRecord) => (local ? fetchLocalModel : fetch)(`${custom_url}/chat/completions`, {
       method: 'POST', signal: requestSignal, credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
@@ -494,24 +486,6 @@ export async function requestServiceModel(settings: ModelApiSettings, messages: 
     });
     return readModelRequest(send, payload, settings.transport, { signal: requestSignal });
   });
-}
-
-function localTemplateMessages(messages: readonly ModelMessage[]): ModelMessage[] {
-  const result: ModelMessage[] = [];
-  let inConversation = false;
-  for (const { role, content } of messages) {
-    // Local chat templates often accept exactly one leading system message.
-    // Keep trailing instructions after the content they apply to.
-    const trailing = inConversation && role === 'system';
-    const entry: ModelMessage = trailing
-      ? { role: 'user', content: `配图补充指令\n${content}` }
-      : { role, content };
-    if (role !== 'system') inConversation = true;
-    const previous = result.at(-1);
-    if (previous?.role === entry.role) previous.content += `\n\n${entry.content}`;
-    else result.push(entry);
-  }
-  return result;
 }
 
 function validateModelRequest(settings: ModelApiSettings, messages: readonly ModelMessage[]): void {
@@ -547,8 +521,8 @@ export async function requestModel(
 ): Promise<string> {
   validateModelRequest(settings, messages);
   const stream = settings.transport !== 'nonstream';
-  const toolEnvelope = settings.transport === 'toolcall' ? buildToolCallEnvelope(messages) : null;
-  const copiedMessages = toolEnvelope?.messages ?? messages.map(({ role, content }) => ({ role, content }));
+  const toolEnvelope = buildToolCallEnvelope(messages);
+  const copiedMessages = toolEnvelope.messages;
   return withRequest(options.signal, 300_000, async signal => {
     const endpoint = '/api/backends/chat-completions/generate';
     let headers: HeadersInit;
@@ -572,15 +546,16 @@ export async function requestModel(
         model, messages: copiedMessages, stream, max_tokens: settings.maxTokens, temperature: settings.temperature,
       } : await host.ChatCompletionService.presetToGeneratePayload({}, {
         openai_max_tokens: settings.maxTokens, temperature: settings.temperature,
-        function_calling: toolEnvelope !== null, enable_web_search: false, request_images: false,
+        function_calling: true, enable_web_search: false, request_images: false,
       }, { model, messages: copiedMessages, stream });
       // Keep text and its ordering controlled by this extension's preset and feature layers.
-      for (const key of ['tools', 'tool_choice', 'custom_include_body', 'custom_exclude_body', 'assistant_prefill']) {
+      for (const key of ['tools', 'tool_choice', 'response_format', 'custom_include_body', 'custom_exclude_body', 'assistant_prefill']) {
         delete payload[key];
       }
       payload.custom_prompt_post_processing = 'none';
     }
-    if (toolEnvelope) { payload.tools = toolEnvelope.tools; payload.tool_choice = 'required'; }
+    payload.tools = toolEnvelope.tools;
+    payload.tool_choice = 'required';
     const send = (body: JsonRecord) => {
       signal.throwIfAborted();
       return fetch(endpoint, {
