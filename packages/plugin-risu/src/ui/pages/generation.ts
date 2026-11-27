@@ -76,7 +76,7 @@ export function renderGeneration(main: HTMLElement, services: UiServices) {
     el("h2", "配图概括与生图", main);
     el(
       "p",
-      "模型、画师词、画幅和配图上限使用服务端配置。回复完成后准备配图概括；在聊天中点击各条「生图」生成所选图片。角色卡、模型、画师和自动配图设置统一在服务管理台配置。",
+      "模型、画师词、画幅和配图上限使用服务端配置。回复完成后自动规划配图、依次生图并挂回原文。角色卡、模型、画师和自动配图设置统一在服务管理台配置。",
       main,
     );
   }
@@ -100,7 +100,7 @@ export function renderGeneration(main: HTMLElement, services: UiServices) {
     main,
     state.settings.execution === "legacy"
       ? "补生当前最新已完成回复（去重）"
-      : "为最新已完成回复准备配图概括（去重）",
+      : "为最新已完成回复自动配图（去重）",
     generation.recoverLatestOutput,
     state.busy || state.working,
   );

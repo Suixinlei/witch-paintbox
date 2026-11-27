@@ -143,7 +143,7 @@ export function createWorker(deps: {
         illustration,
         prompt: illustration.prompt,
         serviceScene: true,
-        awaitingClick: true,
+        awaitingClick: false,
         summaryAttached: false,
         state: "ready",
         files: [],
@@ -267,7 +267,6 @@ export function createWorker(deps: {
     !j.supersededBy &&
     j.state === "ready" &&
     !j.awaitingClick &&
-    (j.settings.execution === "legacy" || j.manual) &&
     !!text(j.prompt) &&
     !!j.illustration &&
     (state.settings.enabled || j.manual);

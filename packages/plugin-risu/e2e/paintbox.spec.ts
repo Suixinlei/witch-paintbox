@@ -52,7 +52,7 @@ async function installFixture(page: Page) {
   await expect(page.getByLabel("助手回复完成后自动配图")).toHaveCount(0);
 }
 
-test("Risu persists summaries without drawing until the selected summary is clicked", async ({
+test("Risu automatically draws every planned image once and attaches them after the reply", async ({
   page,
 }) => {
   await page.route("**/e2e-paintbox/v1/**", async (route) => {
@@ -88,7 +88,9 @@ test("Risu persists summaries without drawing until the selected summary is clic
       });
     }
     expect(endpoint).toBe("images");
-    expect(body.input).toEqual({ scene: "red paper boat, lake" });
+    expect(["red paper boat, lake", "pine tree reflections, lake"]).toContain(
+      body.input.scene,
+    );
     return route.fulfill({
       contentType,
       body: packet({ history: { id: body.history.id } }, [png]),
@@ -100,14 +102,19 @@ test("Risu persists summaries without drawing until the selected summary is clic
     window.harness.emitRaw(text);
   }, reply);
   await expect
-    .poll(async () => (await snapshot(page)).attachments.length)
-    .toBe(1);
+    .poll(
+      async () =>
+        (await jobs(page)).filter((job) => job.attachmentState === "attached")
+          .length,
+    )
+    .toBe(2);
   const [original, second] = await jobs(page);
   expect(original).toMatchObject({
-    awaitingClick: true,
+    awaitingClick: false,
     summaryAttached: true,
-    files: [],
+    state: "complete",
   });
+  expect(second).toMatchObject({ awaitingClick: false, state: "complete" });
   const state = await snapshot(page);
   expect(state.attachments[0]).toMatchObject({
     expectedRawMessageText: reply,
@@ -121,44 +128,21 @@ test("Risu persists summaries without drawing until the selected summary is clic
       },
     ],
   });
-  expect(state.files[`automatic-image-${original.id}-0`]).toBeUndefined();
-  expect(state.files[`automatic-image-${second.id}-0`]).toBeUndefined();
-  expect(
-    state.calls.filter(
-      ({ kind, payload }) =>
-        kind === "paintbox" &&
-        (payload as { path?: string }).path === "/v1/images",
-    ),
-  ).toHaveLength(0);
+  for (const job of [original, second])
+    expect(state.attachments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          replaceImageIds: expect.arrayContaining([job.id + ":0"]),
+        }),
+      ]),
+    );
   await page.reload();
   await expect(
     page.getByRole("button", { name: "服务连接", exact: true }),
   ).toBeVisible();
   await page.evaluate((text) => window.harness.emitRaw(text), reply);
   await expect.poll(async () => (await jobs(page)).length).toBe(2);
-  expect(
-    (await snapshot(page)).calls.filter(
-      ({ kind, payload }) =>
-        kind === "paintbox" &&
-        (payload as { path?: string }).path === "/v1/images",
-    ),
-  ).toHaveLength(0);
-  expect(
-    await page.evaluate(
-      (id) => window.harness.request("regenerate", true, id),
-      `${original.id}:0`,
-    ),
-  ).toMatchObject({ accepted: true });
-  await expect
-    .poll(async () => (await snapshot(page)).attachments.length)
-    .toBe(2);
   const finished = await snapshot(page);
-  expect(finished.attachments[1]).toMatchObject({
-    replaceImageIds: expect.arrayContaining([`${original.id}:0`]),
-  });
-  expect(finished.attachments[1]).not.toMatchObject({
-    replaceImageIds: expect.arrayContaining([`${second.id}:0`]),
-  });
   const requests = finished.calls
     .filter(({ kind }) => kind === "paintbox")
     .map(({ payload }) => payload as { path: string });
@@ -167,11 +151,7 @@ test("Risu persists summaries without drawing until the selected summary is clic
   ).toHaveLength(1);
   expect(
     requests.filter((request) => request.path === "/v1/images"),
-  ).toHaveLength(1);
-  expect((await jobs(page)).find((job) => job.id === second.id)).toMatchObject({
-    awaitingClick: true,
-    files: [],
-  });
+  ).toHaveLength(2);
   expect(
     finished.calls.filter(({ kind }) => ["model", "novelai"].includes(kind)),
   ).toEqual([]);
@@ -209,16 +189,6 @@ test("real Paintbox planning, NovelAI PNG and Risu attachment", async ({
   });
   await installFixture(page);
   await page.evaluate((text) => window.harness.emitRaw(text), line);
-  await expect
-    .poll(async () => (await jobs(page)).some((job) => job.awaitingClick), {
-      timeout: 120_000,
-    })
-    .toBe(true);
-  const planned = (await jobs(page)).find((job) => job.awaitingClick)!;
-  await page.evaluate(
-    (id) => window.harness.request("regenerate", true, id),
-    planned.id + ":0",
-  );
   let terminal: GenerationJob | undefined;
   await expect
     .poll(

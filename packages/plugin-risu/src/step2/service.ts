@@ -245,7 +245,8 @@ export function createGenerationService(deps: {
       if (
         job.settings.execution === "paintbox" &&
         !job.manual &&
-        job.state === "ready"
+        job.state === "ready" &&
+        job.awaitingClick !== false
       ) {
         job.awaitingClick = true;
         changed = true;

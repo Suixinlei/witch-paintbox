@@ -131,6 +131,35 @@ test("legacy pending plans migrate to shared immutable contexts and survive relo
   ).toHaveLength(0);
 });
 
+test("automatic ready jobs keep their automatic mode after reload", async ({
+  page,
+}) => {
+  await seedLegacyJobs(page);
+  await page.evaluate(async () => {
+    const records = JSON.parse(
+      window.harness.rawSnapshot().files["automatic-jobs"],
+    );
+    for (const job of records) job.awaitingClick = false;
+    await window.risuai.writeServerFile(
+      "automatic-jobs",
+      JSON.stringify(records),
+    );
+  });
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
+  ).toBeVisible();
+  const records = await page.evaluate(() =>
+    JSON.parse(window.harness.snapshot().files["automatic-jobs"]),
+  );
+  expect(records).toHaveLength(120);
+  expect(
+    records.every(
+      (job: { awaitingClick: boolean }) => job.awaitingClick === false,
+    ),
+  ).toBe(true);
+});
+
 test("a persistent recovery write failure keeps the plugin open and the original plans recoverable", async ({
   page,
 }) => {
