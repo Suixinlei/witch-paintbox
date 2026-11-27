@@ -10,11 +10,37 @@ import { createGenerationService } from "../step2/service";
 import { createUi } from "../ui/app";
 import { loadState } from "./state";
 import { createOutfitTest } from "../step1/outfitTest";
+import { createPaintbox, type PaintboxConnection } from "../step2/paintbox";
+import { createStatusPortraits } from "../step2/statusPortraits";
 
 export async function bootstrap(api: RisuApi) {
   const runtime = createRuntime();
   const storage = createStorage(api);
-  const states = await loadState(api, storage, runtime);
+  // Risu renders the open chat as soon as the plugins are loaded, so the status
+  // panel portraits are hooked before anything else is read or registered.
+  const loading = loadState(api, storage, runtime);
+  const session: { connection: () => PaintboxConnection | undefined } = {
+    connection: () => undefined,
+  };
+  const connection = () => session.connection();
+  const statusPortraits = createStatusPortraits({
+    api,
+    runtime,
+    paintbox: createPaintbox(api, connection),
+    connection,
+    ready: loading.then(
+      () => undefined,
+      () => undefined,
+    ),
+  });
+  await api.addRisuScriptHandler("display", statusPortraits.onDisplay);
+  const states = await loading.catch(async (error: unknown) => {
+    await api
+      .removeRisuScriptHandler("display", statusPortraits.onDisplay)
+      .catch(() => undefined);
+    throw error;
+  });
+  session.connection = () => states.generation.paintboxConnection;
   const context = createHostContext(api);
   const model = createModel(api, runtime);
   const repository = createLibraryRepository(storage);
@@ -112,6 +138,7 @@ export async function bootstrap(api: RisuApi) {
       unsubscribe();
       await ui.destroy();
       await api.removeRisuChatListener("output", generation.onAssistantOutput);
+      await api.removeRisuScriptHandler("display", statusPortraits.onDisplay);
       for (const item of registrations) await api.unregisterUIPart(item.id);
       await states.generation.enqueueWrites.catch(() => {});
       await states.generation.autoWrites.catch(() => {});
@@ -123,6 +150,7 @@ export async function bootstrap(api: RisuApi) {
     runtime.disposed = true;
     unsubscribe();
     await ui.destroy();
+    await api.removeRisuScriptHandler("display", statusPortraits.onDisplay);
     for (const item of registrations) await api.unregisterUIPart(item.id);
     throw error;
   }

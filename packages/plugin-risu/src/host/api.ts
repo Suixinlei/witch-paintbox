@@ -111,6 +111,15 @@ export interface RisuApi {
     type: "output",
     listener: (event: OutputEvent) => void,
   ): Promise<void>;
+  /** Risu runs display handlers on each message before its regex scripts and CBS. */
+  addRisuScriptHandler(
+    type: "display",
+    handler: (content: string) => Promise<string | undefined>,
+  ): Promise<void>;
+  removeRisuScriptHandler(
+    type: "display",
+    handler: (content: string) => Promise<string | undefined>,
+  ): Promise<void>;
   registerMessageImageHandler(
     handler: (request: ImageRequest) => Promise<Accepted>,
     supportsReplacement?: boolean,

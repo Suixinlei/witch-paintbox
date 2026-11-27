@@ -7,6 +7,13 @@ export interface PaintboxConnection {
   url: string;
   token: string;
 }
+export interface Portrait {
+  id: string;
+  name: string;
+  aliases: string[];
+  /** Data URL of the panel-sized copy. */
+  image: string;
+}
 
 export function imageDataUrl({
   bytes,
@@ -304,7 +311,52 @@ export function createPaintbox(
     return data.enabled;
   }
 
-  return { connect, plan, draw, image, preferences };
+  /** Portraits of one card; the service answers without images while `revision` is current. */
+  async function portraits(cardId: string, revision?: string) {
+    const response = await request(
+      "risu/portraits",
+      { cardId, ...(revision ? { revision } : {}) },
+      8000,
+    );
+    if (response.headers.get("Content-Type")?.split(";")[0] !== packetType) {
+      const data = record(await response.json());
+      if (data.revision !== revision || data.unchanged !== true)
+        throw invalid();
+      return { revision, unchanged: true as const };
+    }
+    const { value, images } = await unpack(response);
+    if (
+      (typeof value.revision !== "string" && value.revision !== null) ||
+      !Array.isArray(value.portraits) ||
+      value.portraits.length !== images.length
+    )
+      throw invalid();
+    const used = new Set<number>();
+    const loaded = value.portraits.map((item: unknown): Portrait => {
+      const { id, name, aliases, blobIndex } = record(item);
+      if (
+        typeof id !== "string" ||
+        !id ||
+        typeof name !== "string" ||
+        !Array.isArray(aliases) ||
+        aliases.some((alias) => typeof alias !== "string") ||
+        typeof blobIndex !== "number" ||
+        !Number.isSafeInteger(blobIndex) ||
+        !images[blobIndex] ||
+        used.has(blobIndex)
+      )
+        throw invalid();
+      used.add(blobIndex);
+      return { id, name, aliases, image: imageDataUrl(images[blobIndex]) };
+    });
+    return {
+      revision: value.revision as string | null,
+      unchanged: false as const,
+      portraits: loaded,
+    };
+  }
+
+  return { connect, plan, draw, image, preferences, portraits };
 }
 
 export type Paintbox = ReturnType<typeof createPaintbox>;

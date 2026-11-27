@@ -1,5 +1,7 @@
 # 魔女画匣 · Risu 插件
 
+2.5.8 起，Risu 状态面板的肖像位自动取用画匣人设图。插件的 display 处理器读取消息里的 `varId`，在当前卡的人物里按 id、别名、名字匹配，把服务返回的缩略图以作用域样式盖到面板的 `.portrait[data-char]` 肖像位上；不改角色卡，也不新增插件权限。卡内没有资源条目、没有 `<img>` 或没有显示规则的角色同样出图，画匣里换图后从下一条回复起生效。由服务管理台「Risu 全局自动配图」中的「状态面板肖像取用画匣人设图」开关控制，默认开启。协议见[状态面板人设图](docs/STATUS-PORTRAITS.md)。
+
 2.5.7 精简服务模式：插件只保留服务连接、配图和生图回顾，以及打开独立服务管理台的链接。角色卡、服装、模型、生图参数、画师、Prompt 和自动配图设置统一在服务管理台维护；插件不再嵌入编辑器，不接收管理员令牌，也不读写管理员配置接口。内部插件 ID `global-comfy-image` 保持不变，已有连接、任务和图片继续读取。回复完成后自动规划配图、依次生图并挂回原文，仍由服务管理台的自动配图开关控制。
 
 Risu 角色卡的人物资料自动从 `library.people` 迁移到 `library.anchors`，角色字段与四方 `CharacterAnchor` 一致：`id/name/aliases/appearance/negative/outfits/selectedOutfitId/portrait/updatedAt`，服装使用 `id/name/tags`。服务启动迁移前会在原目录备份 `risu.before-anchors-*.json`。角色卡之间仍隔离；卡片、场景、画师预设及自动配图偏好保留。旧格式写入请求仍可读取并转换。下文第一步及本地服装的说明适用于保留的 legacy 模式。

@@ -60,6 +60,8 @@ node /mnt/d/Projects/witch-paintbox/.agents/skills/risu-library-maintenance/scri
 
 新增人物必须提供 name/appearance，默认其余字段为空且生成 updatedAt。人物与服装均使用 ID 定位。另支持 `remove-character {id}`、`remove-outfit {characterId,id}`、`set-portrait {characterId,file}`、`clear-portrait {characterId}`。默认服装设为 `outfitId:""` 表示只用固定外貌；删除默认服装后也清空选择。角色图仅 PNG/JPEG/WebP，≤10 MiB，使用文件路径，不把 base64 写进操作文件或对话。注意 `show` 返回的锚点已剥掉 `portrait` 原字段，判断人设图用 `hasPortrait` 布尔值——`set-portrait` 成功后别按 portrait 字段误判失败。
 
+`set-portrait` 保存后，Risu 状态面板的肖像位会自动使用这张图：Risu 插件 2.5.8 起按消息里的 varId 在本卡人物中匹配，把缩略图盖到面板肖像位上，不需要再往卡内 `additionalAssets` 同步资源；卡内资源只是未装插件时的回退。管理台「Risu 全局自动配图」里的「状态面板肖像取用画匣人设图」可整体关闭。新角色的 varId 要与画匣人物 id 或别名一致才会匹配。面板里的姓名、年龄、所属和名册立绘不随画匣变化，仍按 Risu 侧加人技能接线。
+
 脚本只提交这一张卡，保留完整元数据、场景、画师绑定和未修改字段。实际提交前备份到 `/mnt/d/Projects/witch-paintbox/.local/risu-library-backups/`，返回保存后的 revision，并复读验证。网络结果不确定时先读服务状态，不自动重试；提交成功后发现并发修改时也不自动回滚。
 
 ## 预览和全局资料

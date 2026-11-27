@@ -7,6 +7,7 @@
 - [自动生图与队列](AUTOMATIC-GENERATION.md)
 - [构图协议](MOSS-JSON.md)
 - [回复图片](INLINE-IMAGES.md)
+- [状态面板人设图](STATUS-PORTRAITS.md)
 - [重新生成与恢复](REGENERATE-IMAGES.md)
 - [场景校验](SCENE-REVIEW.md)
 - [验证范围](PRODUCTION-REVIEW.md)

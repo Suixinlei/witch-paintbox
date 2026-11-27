@@ -218,6 +218,7 @@ let output: ((event: OutputEvent) => void) | undefined,
   imageRequest: ((request: ImageRequest) => Promise<Accepted>) | undefined,
   openLibrary: (() => Promise<void>) | undefined,
   openAutomatic: (() => Promise<void>) | undefined,
+  display: ((content: string) => Promise<string | undefined>) | undefined,
   unload: (() => Promise<void>) | undefined;
 const png =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5xkAAAAASUVORK5CYII=";
@@ -644,6 +645,12 @@ const api: RisuApi = {
   async removeRisuChatListener() {
     output = undefined;
   },
+  async addRisuScriptHandler(_type, handler) {
+    display = handler;
+  },
+  async removeRisuScriptHandler() {
+    display = undefined;
+  },
   async registerMessageImageHandler(handler) {
     imageRequest = handler;
   },
@@ -676,6 +683,8 @@ declare global {
       observerName(name: string): void;
       illustrationResponse(value: string): void;
       illustrationLore(entries: LoreEntry[]): void;
+      display(text: string): Promise<string | undefined>;
+      recard(id: string): void;
       request(
         mode?: string,
         currentReply?: boolean,
@@ -700,6 +709,12 @@ window.harness = {
   observerName(name) {
     state.observerName = name;
     save();
+  },
+  async display(text) {
+    return display?.(text);
+  },
+  recard(id) {
+    char.chaId = id;
   },
   async inject(model = "model") {
     return (
