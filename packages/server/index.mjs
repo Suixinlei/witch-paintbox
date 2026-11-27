@@ -16,7 +16,7 @@ import { historyScope } from '@witch-paintbox/plugin-sifang/runtime/image-histor
 import { prepareImagePrompt } from '@witch-paintbox/plugin-sifang/runtime/image-prompt.js';
 import { defaultSettings } from '@witch-paintbox/plugin-sifang/runtime/settings.js';
 import { createImageJobs } from './jobs.mjs';
-import { openRisuConfig, createPortraitThumbnails, risuCardId, risuLibrary } from './risu.mjs';
+import { openRisuConfig, createPortraitThumbnails, portraitLink, portraitPaths, risuCardId, risuLibrary } from './risu.mjs';
 import { bounds, historyDraft, invalid, object, readBody, readJson, readPacket, RequestError, sendJson, sendPacket, text } from './request.mjs';
 
 const hash = x => createHash('sha256').update(x).digest();
@@ -38,6 +38,42 @@ const directory = resolve(env.PAINTBOX_DATA_DIR || 'paintbox-data');
 const config = await openServiceConfig(directory);
 const risu = await openRisuConfig(directory);
 const portraitThumbnails = createPortraitThumbnails();
+// Content keys are indexed per card and rebuilt whenever the Risu library revision moves.
+const portraitKeys = new Map();
+async function portraitAnchor(cardId, key) {
+  const { revision } = risu.snapshot();
+  // The route takes no token, so ids that name no card must not be kept.
+  if (!risu.card(cardId)) return undefined;
+  let index = portraitKeys.get(cardId);
+  if (!index || index.revision !== revision) {
+    index = { revision, anchors: new Map() };
+    for (const anchor of risu.card(cardId)?.library.anchors ?? []) {
+      if (!anchor.portrait) continue;
+      // A portrait that cannot be decoded has no copies to link.
+      try { index.anchors.set((await portraitThumbnails(anchor.portrait)).key.slice(0, 32), anchor); }
+      catch { /* skipped below by the lookup */ }
+    }
+    portraitKeys.set(cardId, index);
+  }
+  return index.anchors.get(key);
+}
+async function sendPortrait(res, cardId, key, type) {
+  const anchor = await portraitAnchor(cardId, key);
+  const portrait = anchor?.portrait;
+  // The original is served under its own type, so another extension is not this picture.
+  if (!portrait || (type && portrait.slice(5, portrait.indexOf(';')) !== `image/${type}`)) {
+    sendJson(res, { error: '人设图不存在。' }, 404);
+    return;
+  }
+  // Thumbnails are cached; the original is decoded per request and only fetched when a reader zooms in.
+  const body = type ? Buffer.from(portrait.slice(portrait.indexOf(',') + 1), 'base64') : (await portraitThumbnails(portrait)).webp;
+  res.writeHead(200, {
+    'Content-Type': type ? `image/${type}` : 'image/webp',
+    'Content-Length': body.length,
+    'Cache-Control': 'private, max-age=31536000, immutable',
+  });
+  res.end(body);
+}
 const library = await openLibrary(directory, async entry => {
   if (!entry.scenePrompt) return undefined;
   const scope = historyScope(entry.markerKey);
@@ -132,21 +168,27 @@ async function route(req, res, signal, isRisu) {
   if (req.method !== 'POST') throw new RequestError('独立服务接口不存在。', 404);
   if (path === '/v1/risu/portraits') {
     const data = await readJson(req);
-    if (!risuCardId(data.cardId) || (data.revision !== undefined && !risuCardId(data.revision))) invalid();
+    if (!risuCardId(data.cardId) || (data.revision !== undefined && !risuCardId(data.revision))
+      || (data.links !== undefined && data.links !== true)) invalid();
     const { revision, preferences } = risu.snapshot();
     if (data.revision === revision) return sendJson(res, { revision, unchanged: true });
     const portraits = [];
     const blobs = [];
     for (const { id, name, aliases, portrait } of preferences.statusPortraits ? risu.card(data.cardId)?.library.anchors ?? [] : []) {
       if (!portrait) continue;
-      try { blobs.push(new Blob([await portraitThumbnails(portrait)], { type: 'image/webp' })); }
+      let copy;
+      try { copy = await portraitThumbnails(portrait); }
       catch {
         console.warn('画匣服务跳过了一张无法解码的人设图。');
         continue;
       }
-      portraits.push({ id, name, aliases: [...aliases], blobIndex: blobs.length - 1 });
+      // `links` hands out content-addressed URLs for the page to load itself; older plugins take the bytes.
+      if (!data.links) blobs.push(new Blob([copy.webp], { type: 'image/webp' }));
+      portraits.push({ id, name, aliases: [...aliases], ...(data.links
+        ? { width: copy.width, height: copy.height, ...portraitPaths(data.cardId, portrait, copy.key) }
+        : { blobIndex: blobs.length - 1 }) });
     }
-    return sendPacket(res, packet({ revision, portraits }, blobs));
+    return data.links ? sendJson(res, { revision, portraits }) : sendPacket(res, packet({ revision, portraits }, blobs));
   }
   if (path === '/v1/admin/risu/preferences') return sendJson(res, { revision: await risu.savePreferences(await readJson(req), signal) });
   if (path === '/v1/admin/risu/cards') return sendJson(res, { revision: await risu.putCards(await readJson(req, 128 * 1024 * 1024), signal) });
@@ -283,6 +325,16 @@ const server = createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': type, 'Content-Length': data.length }).end(data);
       return;
     }
+  }
+  // Portrait copies are content-addressed and carry no token (see risu.mjs), so they precede the token check.
+  const linked = req.method === 'GET' && portraitLink.exec(req.url);
+  if (linked) {
+    try { await sendPortrait(res, linked[1], linked[2], linked[3]); }
+    catch {
+      if (!res.headersSent) sendJson(res, { error: '人设图暂不可用。', fault: 'unknown' }, 500);
+      else res.destroy();
+    }
+    return;
   }
   const provided = hash(req.headers.authorization ?? '');
   const isRisu = risuTokenHash !== null && timingSafeEqual(provided, risuTokenHash);

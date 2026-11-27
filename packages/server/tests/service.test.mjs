@@ -126,6 +126,38 @@ test('Risu portraits endpoint serves panel-sized copies of one card, honours the
       { format: 'webp', width: 200, height: 300 }, 'small portraits are not enlarged');
     const stale = await send('risu/portraits', { cardId: 'card-0', revision: 'rev-1' });
     assert.deepEqual(await stale.json(), { revision: 'rev-1', unchanged: true });
+    // Newer plugins take content-addressed links and let the page load the pictures itself.
+    const links = await send('risu/portraits', { cardId: 'card-0', links: true });
+    assert.equal(links.status, 200);
+    const table = await links.json();
+    assert.equal(table.revision, 'rev-1');
+    assert.deepEqual(table.portraits.map(({ id }) => id), ['chenhai', 'lucie']);
+    const [chenhai, lucie] = table.portraits;
+    assert.deepEqual([chenhai.width, chenhai.height, lucie.width, lucie.height], [200, 300, 120, 90]);
+    assert.match(chenhai.thumb, /^\/v1\/risu\/portrait\/card-0\/[a-f0-9]{32}\.webp$/);
+    assert.equal(chenhai.full, chenhai.thumb.replace(/\.webp$/, '.full.png'));
+    assert.equal(lucie.full, lucie.thumb.replace(/\.webp$/, '.full.jpeg'));
+    assert.equal((await send('risu/portraits', { cardId: 'card-0', links: 'yes' })).status, 400);
+    assert.deepEqual(await (await send('risu/portraits', { cardId: 'card-0', revision: 'rev-1', links: true })).json(), { revision: 'rev-1', unchanged: true });
+    // Picture links are absolute paths from the service origin and need no token at all.
+    const picture = (path, options) => fetch(`${url.slice(0, -3)}${path}`, options);
+    const thumb = await picture(chenhai.thumb);
+    assert.equal(thumb.status, 200);
+    assert.equal(thumb.headers.get('Content-Type'), 'image/webp');
+    assert.equal(thumb.headers.get('Cache-Control'), 'private, max-age=31536000, immutable');
+    assert.deepEqual(Buffer.from(await thumb.arrayBuffer()), Buffer.from(await first.blobs[0].arrayBuffer()));
+    const original = await picture(chenhai.full);
+    assert.equal(original.headers.get('Content-Type'), 'image/png');
+    assert.deepEqual(Buffer.from(await original.arrayBuffer()), png);
+    assert.deepEqual(Buffer.from(await (await picture(lucie.full)).arrayBuffer()), jpeg);
+    // Another card, an unknown card, another extension and a wrong digest are unknown pictures; a missing suffix is not a picture link at all.
+    for (const unknown of [
+      chenhai.thumb.replace('card-0', 'card-1'), chenhai.thumb.replace('card-0', 'no-such-card'), chenhai.full.replace('.full.png', '.full.jpeg'),
+      chenhai.thumb.slice(0, -6) + (chenhai.thumb.at(-6) === '0' ? '1' : '0') + '.webp',
+    ]) assert.equal((await picture(unknown)).status, 404, unknown);
+    for (const malformed of [chenhai.thumb.replace(/\.webp$/, ''), '/v1/risu/portrait/card-0/../card-1/x.webp'])
+      assert.equal((await picture(malformed)).status, 401, malformed);
+    assert.equal((await picture(chenhai.thumb, { method: 'POST' })).status, 401);
     const second = await portraits({ cardId: 'card-1' });
     assert.deepEqual(second.portraits.map(({ id }) => id), ['other']);
     const large = await sharp(Buffer.from(await second.blobs[0].arrayBuffer())).metadata();

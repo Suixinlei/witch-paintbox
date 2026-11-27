@@ -128,19 +128,31 @@ function legacyAnchors(people) {
 }
 
 const portraitThumb = { width: 640, height: 960 };
+export const portraitTypes = { 'image/png': 'png', 'image/jpeg': 'jpeg', 'image/webp': 'webp' };
+/** A content-addressed picture needs no token: the first 128 bits of its digest are the address. */
+export const portraitLink = /^\/v1\/risu\/portrait\/([\w-]{1,128})\/([a-f0-9]{32})(?:\.full\.(png|jpeg|webp)|\.webp)$/;
 
 /** Panel-sized WebP copies of saved portraits; the same portrait is encoded once. */
 export function createPortraitThumbnails() {
   const cache = new Map();
-  return async portrait => {
+  return portrait => {
     const key = createHash('sha256').update(portrait).digest('hex');
     let task = cache.get(key);
     if (!task) {
       task = sharp(Buffer.from(portrait.slice(portrait.indexOf(',') + 1), 'base64'), { limitInputPixels: 4096 * 4096, failOn: 'error' })
-        .rotate().resize({ ...portraitThumb, fit: 'inside', withoutEnlargement: true }).webp({ quality: 78 }).toBuffer()
+        .rotate().resize({ ...portraitThumb, fit: 'inside', withoutEnlargement: true }).webp({ quality: 78 })
+        .toBuffer({ resolveWithObject: true })
+        .then(({ data, info }) => ({ key, webp: data, width: info.width, height: info.height }))
         .catch(error => { cache.delete(key); throw error; });
       cache.set(key, task);
     }
     return task;
   };
+}
+
+/** Where a portrait's copies live; `full` is the saved original and is omitted for unknown types. */
+export function portraitPaths(cardId, portrait, key) {
+  const type = portraitTypes[portrait.slice(5, portrait.indexOf(';'))];
+  const base = `/v1/risu/portrait/${cardId}/${key.slice(0, 32)}`;
+  return { thumb: `${base}.webp`, ...(type ? { full: `${base}.full.${type}` } : {}) };
 }
