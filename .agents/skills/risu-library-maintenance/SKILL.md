@@ -1,6 +1,6 @@
 ---
 name: risu-library-maintenance
-description: 只读提取本机 Risu 角色卡描述与世界书，在魔女画匣服务维护对应卡的人物锚点、专属服装、默认服装及人设图。用于从 Risu 卡整理或更新配图资料；不负责修改原卡、聊天、插件安装或部署。
+description: 只读提取本机 Risu 角色卡描述与世界书，在魔女画匣服务维护对应卡的人物锚点、专属服装、默认服装，以及把定稿的人设图挂到人物上。用于从 Risu 卡整理或更新配图资料；不负责生成图片（出图用 witch-paintbox-portrait），也不负责修改原卡、聊天、插件安装或部署。
 ---
 
 # Risu 角色卡与人物服装维护
@@ -64,9 +64,11 @@ node /mnt/d/Projects/witch-paintbox/.agents/skills/risu-library-maintenance/scri
 
 脚本只提交这一张卡，保留完整元数据、场景、画师绑定和未修改字段。实际提交前备份到 `/mnt/d/Projects/witch-paintbox/.local/risu-library-backups/`，返回保存后的 revision，并复读验证。网络结果不确定时先读服务状态，不自动重试；提交成功后发现并发修改时也不自动回滚。
 
-## 预览和全局资料
+## 出图
 
-用户需要 NAI 预览时，可调用 `/mnt/d/Projects/witch-paintbox/.agents/skills/sifang-library-maintenance/scripts/paintbox.mjs draw --positive ... --negative ... --label ...`。raw 模式不自动添加画师词，按需要读取并加入；本卡人物不能传给该脚本的 `--character`（它只查全局四方库）。一次只发一个绘图请求，返回图片后展示给用户。人设立绘默认正视、平视、面向镜头，用户要求其他构图时按用户要求。
+给本卡人物出任何图都用 [witch-paintbox-portrait](../witch-paintbox-portrait/SKILL.md)，这是唯一入口：先在这里改好锚点，再用它的脚本直接出裸体正/侧面、下体图或服装图（服装图可 `--save` 存回）。不要写临时脚本，也不要用 `paintbox.mjs draw` 手拼提示词。
+
+`/mnt/d/Projects/witch-paintbox/.agents/skills/sifang-library-maintenance/scripts/paintbox.mjs draw` 是全局四方库和任意提示词的通用入口，本卡人物不能传给它的 `--character`；只有新技能覆盖不了的画面（例如用户点名要的特殊构图）才用它，先问过用户。
 
 维护全局人物、全局通用服装时，使用 [sifang-library-maintenance](/mnt/d/Projects/witch-paintbox/.agents/skills/sifang-library-maintenance/SKILL.md)。通用服装复制进本卡后是独立专属服装；引用全局通用服装沿用 `#服装名`，不添加虚构的关联字段。
 
