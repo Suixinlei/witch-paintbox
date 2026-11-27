@@ -29,6 +29,7 @@ export const CHARACTER_POSITION_INSTRUCTION = `<角色站位协议>
 根据每张图的实际构图，为每个角色栏在最开头输出 @position(x,y)，再写该角色的引用、服装、动作与表情。x/y 是该人物在画面内可见主体的中心，范围 0～1；左上角为 (0,0)，右下角为 (1,1)，中间为 (0.5,0.5)。左右一律指画面左右，不是人物自身左右。
 先确定镜头、姿势、前后、遮挡及互动，再分配位置；不要机械地把所有人物等距排成一行。相拥或重叠人物允许坐标接近；前后关系仍用英文描述，y 不代表景深。人物栏尽量按画面从上到下、从左到右排列，坐标、角色动作和全局构图必须一致。仅为实际入画人物建栏，不为第一人称画外观察者单独建栏。
 示例：2girls, garden, side by side | @position(0.3,0.5) girl, @角色甲, on the left, holding a cup | @position(0.7,0.5) girl, @角色乙, on the right, waving ~ glasses
+竖线 | 只用于开始一个新角色栏；同一角色的外貌、服装、动作与表情都写在该栏内，用逗号连接，不要用额外的 | 拆开动作句。每个角色栏都必须以自己的 @position(x,y) 开头。
 保留原有 JSON、插入点、尺寸和图片标记输出格式；@position 只写在 prompt 内各角色栏开头，不增加 JSON 字段。
 </角色站位协议>`;
 import { withFault } from './pet-events.js';

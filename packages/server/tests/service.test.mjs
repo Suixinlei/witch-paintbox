@@ -19,6 +19,7 @@ import { applyImageInsertions, createImageInsertionPlan } from '@witch-paintbox/
 import { parseImageMarkers } from '@witch-paintbox/plugin-sifang/runtime/image-markers.js';
 import { prepareImagePrompt } from '@witch-paintbox/plugin-sifang/runtime/image-prompt.js';
 import { drawNovelAI } from '@witch-paintbox/plugin-sifang/runtime/novelai-draw.js';
+import { snapshotCharacters } from '@witch-paintbox/plugin-sifang/runtime/novelai.js';
 import { imagePlanningInput } from '@witch-paintbox/plugin-sifang/runtime/image-planning.js';
 import { setServiceRasterDecoder } from '@witch-paintbox/plugin-sifang/runtime/raster-image.js';
 import { PACKET_TYPE, packet, unpack } from '@witch-paintbox/plugin-sifang/runtime/service-protocol.js';
@@ -104,6 +105,20 @@ test('composition coordinates stay bound to appearance and negative fields throu
   assert.match(imagePlanningInput(plan), /@position\(x,y\)/);
   assert.match(imagePlanningInput(plan, [{ pointIds: [plan.points[0].id] }]), /@position\(x,y\)/);
   assert.doesNotMatch(imagePlanningInput(plan, undefined, false), /@position/);
+});
+
+test('positioned prose continuations stay on their character instead of becoming unpositioned cast', async () => {
+  const prompt = await prepareImagePrompt(
+    '1boy, 2girls, garden | @position(0.3,0.42) boy, black hair | @position(0.42,0.6) girl, silver hair | She kneels beside a flower bed. | @position(0.72,0.62) girl, brown hair | She holds a watering can. ~ red eyes',
+    'blur', '', 22, { anchors: [], outfits: [] });
+  assert.equal(prompt.characters.length, 3);
+  assert.deepEqual(prompt.characters.map(character => character.center), [
+    { x: 0.3, y: 0.42 }, { x: 0.42, y: 0.6 }, { x: 0.72, y: 0.62 },
+  ]);
+  assert.match(prompt.characters[1].positive, /silver hair, She kneels/);
+  assert.match(prompt.characters[2].positive, /brown hair, She holds/);
+  assert.equal(prompt.characters[2].negative, 'red eyes');
+  assert.equal(snapshotCharacters(prompt.characters, 'nai-diffusion-5-full').length, 3);
 });
 
 test('reserved 无服装 works as a shared-outfit token while unknown names fall back to the default', async () => {

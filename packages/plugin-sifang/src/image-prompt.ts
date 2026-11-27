@@ -69,6 +69,17 @@ function parseScene(source: string, characterLimit: number): { positive: string;
     const positive = source.slice(bar.index + 1, negatives[0]?.index ?? end).trim();
     const negative = negatives.length ? source.slice(negatives[0].index + 1, end).trim() : '';
     if (!positive) return plain;
+    // A planner may separate a character's prose action with another bar.
+    // Keep that continuation on the positioned character instead of creating
+    // a phantom character with no coordinates. Explicit character columns
+    // still require their own position and are validated before submission.
+    const previous = characters.at(-1);
+    if (previous && /^@position\s*\(/i.test(previous.positive)
+      && /^(?:she|he|they|her|his|their)\b/i.test(positive)) {
+      previous.positive += ', ' + positive;
+      previous.negative = [previous.negative, negative].filter(Boolean).join(', ');
+      continue;
+    }
     characters.push({ positive, negative });
   }
   // Some planners put the cast count and environment in separate columns.
