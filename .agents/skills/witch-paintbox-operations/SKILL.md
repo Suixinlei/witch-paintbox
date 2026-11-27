@@ -24,7 +24,7 @@ node .agents/skills/witch-paintbox-operations/scripts/update-server.mjs -Apply
 
 查看状态和日志：`systemctl --user status witch-paintbox.service`、`journalctl --user -u witch-paintbox.service -f`。
 
-**托管方式。** 用户服务随 WSL 实例启动，而 WSL 实例在没有会话时会自动关机，所以 Windows 计划任务 `Witch Paintbox Local Service` 在登录时启动一个不显示窗口的 `wsl.exe` 保活会话（运行 `~/.local/share/witch-paintbox/keepalive.sh`）。本机没有免密 sudo，开不了 linger，常驻依赖这个保活；部署脚本确认它在跑，不在就启动计划任务。停止该计划任务只会结束它的控制台宿主，保活循环会继续运行，服务的启停一律用 `systemctl --user`。迁移前的任务定义备份在 `%LOCALAPPDATA%/WitchPaintbox/backups/task-before-wsl-*.xml`。
+**托管方式。** 用户服务随 WSL 实例启动，而 WSL 实例在没有会话时会自动关机，所以 Windows 计划任务 `Witch Paintbox Local Service` 在登录时启动一个不显示窗口的 `wsl.exe` 保活会话（运行 `~/.local/share/witch-paintbox/keepalive.sh`）。本机没有免密 sudo，开不了 linger，常驻依赖这个保活；部署脚本确认它在跑，不在就启动计划任务。停止该计划任务只会结束它的控制台宿主，保活循环会继续运行，服务的启停一律用 `systemctl --user`。迁移前的任务定义备份在 `%LOCALAPPDATA%/WitchPaintbox/backups/task-before-wsl-*.xml`，但 Windows 版发布目录已经删除，不再有可直接切回的 Windows 托管版本。
 
 ## 四方世界
 

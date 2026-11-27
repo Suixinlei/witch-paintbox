@@ -74,7 +74,7 @@ Risu 只读解码器默认定位相邻的 `/mnt/d/Projects/risu`；需要其他�
 - 用户服务随 WSL 实例启动。WSL 实例没有会话时会自动关机，所以 Windows 计划任务 `Witch Paintbox Local Service` 在登录时启动一个不显示窗口的 `wsl.exe` 保活会话，运行 `~/.local/share/witch-paintbox/keepalive.sh`。本机没有免密 sudo，开不了 linger，常驻依赖这个保活。
 - 查看状态用 `systemctl --user status witch-paintbox.service`，日志用 `journalctl --user -u witch-paintbox.service -f`。
 
-仍然必须调用 Windows 的只有这个计划任务，部署脚本通过 `scripts/service-task.ps1` 桥接。迁移前的任务定义备份在 `%LOCALAPPDATA%/WitchPaintbox/backups/task-before-wsl-*.xml`，原先的 Windows 发布目录 `app-monorepo-*` 仍保留在 `%LOCALAPPDATA%/WitchPaintbox/` 下。
+仍然必须调用 Windows 的只有这个计划任务，部署脚本通过 `scripts/service-task.ps1` 桥接。迁移前的任务定义备份在 `%LOCALAPPDATA%/WitchPaintbox/backups/task-before-wsl-*.xml`；原先的 Windows 发布目录已删除，要回退到 Windows 托管，得先用 Windows 版 pnpm 重新建一个。`%LOCALAPPDATA%/WitchPaintbox/service.env` 仍是令牌与设置的来源，每次部署都从它生成 WSL 版环境文件，不要删除。
 
 Risu 插件安装更新是跨平台 TypeScript 脚本，直接由 WSL Node 执行；不需要 PowerShell，也不因为默认 WSL 而略过其关页确认要求。用法见 [插件更新技能](../packages/plugin-risu/skills/risu-plugin-update/SKILL.md)。
 
