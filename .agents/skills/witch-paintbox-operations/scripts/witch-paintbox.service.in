@@ -1,0 +1,19 @@
+# Witch Paintbox local service for WSL2.
+# update-server.mjs installs this file as ~/.config/systemd/user/witch-paintbox.service. "current" is
+# a symlink to the release in use, so a deployment only moves the link and restarts the unit.
+[Unit]
+Description=Witch Paintbox local service (WSL2)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/witch-paintbox/current
+# Derived from the Windows service.env: same tokens, paths rewritten for /mnt.
+EnvironmentFile=%h/.config/witch-paintbox/service.env
+ExecStart=%h/.local/bin/node packages/server/index.mjs
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

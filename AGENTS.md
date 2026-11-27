@@ -4,7 +4,7 @@
 
 Windows 路径在 WSL2 内转换为 `/mnt/<盘符>/...`。使用 WSL2 内安装的 Node、包管理器和 Python；依赖或工具缺失时先检查项目约定并处理，不静默退回 PowerShell，也不要混用 Windows 与 Linux 的依赖产物。
 
-仅当操作必须访问 Windows 原生能力（如计划任务、本机 Windows 服务部署、Windows 应用或现有 `.ps1` 运维脚本）时，按对应技能使用 Windows 工具；其余工作继续在 WSL2 中完成。若 WSL2 不可用，明确说明具体阻碍。
+仅当操作必须访问 Windows 原生能力（如计划任务、Windows 应用或现有 `.ps1` 脚本）时，按对应技能使用 Windows 工具；其余工作继续在 WSL2 中完成。本机服务运行在 WSL2 的 systemd 用户服务里，部署与验收见[运维技能](.agents/skills/witch-paintbox-operations/SKILL.md)。若 WSL2 不可用，明确说明具体阻碍。
 
 # 默认作用域
 

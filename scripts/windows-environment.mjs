@@ -21,6 +21,32 @@ export function serviceEnvFile(env = process.env) {
   return join(localPath(appData), 'WitchPaintbox', 'service.env');
 }
 
+// Values that are filesystem paths in the Windows service.env.
+const PATH_KEYS = new Set(['PAINTBOX_DATA_DIR']);
+
+/** The Windows service.env as plain values, independent of PAINTBOX_* variables in the caller's own environment. */
+export async function windowsServiceValues(env = process.env) {
+  return serviceEnvironment({ PAINTBOX_ENV_FILE: serviceEnvFile(env) });
+}
+
+function envLine(key, value) {
+  // Single quotes are read the same way by systemd's EnvironmentFile and by node --env-file.
+  if (/['\\\r\n]/.test(value)) throw new Error(`service.env 的 ${key} 含有单引号、反斜杠或换行，无法安全转义。`);
+  return `${key}='${value}'`;
+}
+
+/**
+ * The same settings for the WSL2 copy of the service: drive paths become /mnt paths. Tokens are
+ * reused unchanged; nothing here generates new ones or touches the Windows file.
+ */
+export function wslServiceEnvText(values) {
+  const lines = Object.keys(values)
+    .filter(key => /^PAINTBOX_[A-Z0-9_]+$/.test(key) && key !== 'PAINTBOX_ENV_FILE' && values[key] !== undefined)
+    .sort()
+    .map(key => envLine(key, PATH_KEYS.has(key) ? localPath(values[key]) : values[key]));
+  return lines.length ? lines.join('\n') + '\n' : '';
+}
+
 export async function serviceEnvironment(env = process.env) {
   const result = { ...env };
   try {

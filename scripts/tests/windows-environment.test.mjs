@@ -3,7 +3,28 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { localPath, serviceEnvFile, serviceEnvironment } from '../windows-environment.mjs';
+import { localPath, serviceEnvFile, serviceEnvironment, wslServiceEnvText } from '../windows-environment.mjs';
+
+test('the WSL copy of service.env rewrites drive paths, quotes values and keeps tokens', () => {
+  const token = 'a'.repeat(32);
+  const text = wslServiceEnvText({ PAINTBOX_TOKEN: token, PAINTBOX_DATA_DIR: 'D:\\WitchPaintbox\\data',
+    PAINTBOX_MODEL_URL: 'http://127.0.0.1:1234/v1', PAINTBOX_ENV_FILE: '/mnt/c/Windows/service.env', PATH: '/usr/bin', unrelated: 'x' });
+  assert.equal(text, ["PAINTBOX_DATA_DIR='/mnt/d/WitchPaintbox/data'", "PAINTBOX_MODEL_URL='http://127.0.0.1:1234/v1'",
+    `PAINTBOX_TOKEN='${token}'`].join('\n') + '\n');
+  assert.throws(() => wslServiceEnvText({ PAINTBOX_TOKEN: "it's" }), /无法安全转义/);
+});
+
+test('the generated WSL service.env loads back with the same values', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'paintbox-wslenv-test-'));
+  try {
+    const file = join(directory, 'service.env');
+    const token = 'b'.repeat(40);
+    await writeFile(file, wslServiceEnvText({ PAINTBOX_TOKEN: token, PAINTBOX_RISU_TOKEN: 'c'.repeat(40), PAINTBOX_DATA_DIR: 'D:\\WitchPaintbox\\data' }));
+    const loaded = await serviceEnvironment({ PAINTBOX_ENV_FILE: file });
+    assert.equal(loaded.PAINTBOX_TOKEN, token);
+    assert.equal(loaded.PAINTBOX_DATA_DIR, '/mnt/d/WitchPaintbox/data');
+  } finally { await rm(directory, { recursive: true }); }
+});
 
 test('Windows paths map to WSL mounts without changing native paths', () => {
   assert.equal(localPath('D:\\Projects\\witch-paintbox', 'linux'), '/mnt/d/Projects/witch-paintbox');

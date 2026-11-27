@@ -79,7 +79,8 @@ async function smoke() {
 }
 
 async function verify() {
-  const base = 'http://127.0.0.1:4783';
+  // The override lets a candidate be checked on a temporary port before anything is switched.
+  const base = process.env.PAINTBOX_PROBE_BASE || 'http://127.0.0.1:4783';
   const request = client(base, process.env.PAINTBOX_TOKEN);
   const risu = client(base, process.env.PAINTBOX_RISU_TOKEN);
   const health = await (await request('/v1/health')).json();
@@ -111,6 +112,8 @@ async function verify() {
   console.log(JSON.stringify({
     idle, revision: health.revision, history: summary.history,
     risuDigest: createHash('sha256').update(risuPrefs).digest('hex'), latestImageVerified,
+    // Settings only (booleans and numbers): lets a deployment tell a lost preference from an added field.
+    risuPreferences: JSON.parse(risuPrefs),
   }));
 }
 

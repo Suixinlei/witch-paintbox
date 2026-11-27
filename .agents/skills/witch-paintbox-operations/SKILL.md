@@ -1,11 +1,11 @@
 ---
 name: witch-paintbox-operations
-description: Use when implementing changes to the Witch Paintbox service or its management UI, and for deployment, restart, verification, or plugin release in this repo. Apply and verify service changes on the local Windows instance before handing back. Also covers GitHub releases of 四方世界 and local Risu plugin updates.
+description: Use when implementing changes to the Witch Paintbox service or its management UI, and for deployment, restart, verification, or plugin release in this repo. Apply and verify service changes on the local WSL2 instance before handing back. Also covers GitHub releases of 四方世界 and local Risu plugin updates.
 ---
 
 # 魔女画匣三端运维
 
-默认从 WSL2 的 `/mnt/d/Projects/witch-paintbox` 运行，使用 Linux 原生 Node 和 pnpm。环境准备与依赖隔离见 [WSL2 指南](../../../docs/DEVELOPMENT-WSL2.md)。只有 Windows 计划任务和 Windows 发布目录的操作通过 powershell.exe 桥接；源码安装、构建和测试仍由部署脚本调用 WSL2。
+默认从 WSL2 的 `/mnt/d/Projects/witch-paintbox` 运行，使用 Linux 原生 Node 和 pnpm。环境准备与依赖隔离见 [WSL2 指南](../../../docs/DEVELOPMENT-WSL2.md)。本机服务运行在 WSL2 的 systemd 用户服务里，安装、构建、测试、发布目录和切换都在 WSL2 完成；只有登录时拉起保活会话的那个 Windows 计划任务通过 powershell.exe 桥接。
 
 - 改了独立服务、管理台或服务实际加载的共享运行时代码，就在同一轮完成本机部署和验收，包括从 Risu 发起、实际由服务实现的功能。用户明确要求只改代码或暂缓上线时，按该要求执行。
 - GitHub 发布四方插件和写入本机 Risu 已安装插件走各自流程。用户同时要求部署服务和发布四方时，先准备发布提交，在同一份待发布代码上部署和验证服务，再推 GitHub。
@@ -15,10 +15,16 @@ description: Use when implementing changes to the Witch Paintbox service or its 
 本机服务改动完成后，执行以下命令。若 shell 返回进程会话，等待该会话并读取最终状态。
 
 ```bash
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w .agents/skills/witch-paintbox-operations/scripts/update-server.ps1)" -Apply
+node .agents/skills/witch-paintbox-operations/scripts/update-server.mjs -Apply
 ```
 
-省略 `-Apply` 时只检查运行状态。脚本构建并跑服务测试，在独立目录安装运行依赖，用临时端口和空数据预检。建议在无人发起新任务的时段操作。脚本看到队列空闲后切换并重启 Windows 计划任务 `Witch Paintbox Local Service`，沿用 `%LOCALAPPDATA%/WitchPaintbox/service.env` 和原数据目录。验收包括端口 4783 的新进程、管理页、权限、配置版本、历史图片和 Risu 偏好。仅在报告 `updated` 时确认部署成功。若失败，按脚本结果区分旧服务仍在、已回退或回退失败。验收使用现有记录，无需真实出图。
+省略 `-Apply` 时只检查运行状态，输出 JSON。`-Apply` 在 WSL2 构建并跑服务测试，在 `~/.local/share/witch-paintbox/releases/` 下建带独立 Linux 生产依赖的发布目录，用临时端口和空数据预检。建议在无人发起新任务的时段操作。脚本看到队列空闲后切换 `current` 并重启 systemd 用户服务 `witch-paintbox.service`，沿用 `%LOCALAPPDATA%/WitchPaintbox/service.env` 的令牌与设置（每次部署重新生成 `~/.config/witch-paintbox/service.env`，盘符路径换算成 `/mnt`，数据目录不变）。验收包括端口 4783 的新进程、管理页、权限、配置版本、历史图片和 Risu 偏好。仅在报告 `updated` 时确认部署成功。若失败，按脚本结果区分旧服务仍在、已回退或回退失败。验收使用现有记录，无需真实出图。
+
+部署用的是工作区的现状，未提交的改动会原样上线；脚本发现 `packages/` 下有未提交改动时会在标准错误里列出，并在结果的 `uncommitted` 字段里返回。同一工作区常有并行会话在开发，动手前先看这份清单，不要把别人没写完的功能一并部署。
+
+查看状态和日志：`systemctl --user status witch-paintbox.service`、`journalctl --user -u witch-paintbox.service -f`。
+
+**托管方式。** 用户服务随 WSL 实例启动，而 WSL 实例在没有会话时会自动关机，所以 Windows 计划任务 `Witch Paintbox Local Service` 在登录时启动一个不显示窗口的 `wsl.exe` 保活会话（运行 `~/.local/share/witch-paintbox/keepalive.sh`）。本机没有免密 sudo，开不了 linger，常驻依赖这个保活；部署脚本确认它在跑，不在就启动计划任务。停止该计划任务只会结束它的控制台宿主，保活循环会继续运行，服务的启停一律用 `systemctl --user`。迁移前的任务定义备份在 `%LOCALAPPDATA%/WitchPaintbox/backups/task-before-wsl-*.xml`。
 
 ## 四方世界
 

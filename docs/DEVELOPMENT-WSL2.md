@@ -59,23 +59,22 @@ pnpm test
 
 Linux 浏览器缺少系统库时，使用 Playwright 的 `install-deps chromium` 为该 WSL 发行版安装依赖。测试仅使用各自临时端口和测试数据，不应触发真实 NAI 出图。
 
-需要确认现有 Windows 服务可访问时，运行 `node scripts/check-wsl.mjs --service`。它只读检查管理员 API，不打印令牌或资料内容。当前本机 WSL2 使用 mirrored 网络，WSL 的 `127.0.0.1:4783`、`127.0.0.1:6001` 可访问 Windows 实例；其他机器需单独验证网络，不能为连通而盲目公开服务监听地址。
+需要确认现有服务可访问时，运行 `node scripts/check-wsl.mjs --service`。它只读检查管理员 API，不打印令牌或资料内容。本机 WSL2 使用 mirrored 网络：WSL 内监听的 `127.0.0.1:4783`、`127.0.0.1:6001` 在 Windows 侧同样可以访问，WSL 也能访问 Windows 上的回环端口。Windows 的 `Get-NetTCPConnection` 只报告 Windows 自己的监听，看不到 WSL 里的端口。其他机器需单独验证网络，不能为连通而盲目公开服务监听地址。
 
-维护脚本通过 `scripts/windows-environment.mjs` 读取原 Windows `%LOCALAPPDATA%/WitchPaintbox/service.env`，从 WSL 查询 Windows 环境目录并转换挂载路径；也可设置 `PAINTBOX_ENV_FILE` 指向现有文件。环境变量显式设置优先，不要生成新令牌覆盖现有连接。
+维护脚本通过 `scripts/windows-environment.mjs` 读取 `%LOCALAPPDATA%/WitchPaintbox/service.env`，从 WSL 查询 Windows 环境目录并转换挂载路径；也可设置 `PAINTBOX_ENV_FILE` 指向现有文件。环境变量显式设置优先，不要生成新令牌覆盖现有连接。
 
 Risu 只读解码器默认定位相邻的 `/mnt/d/Projects/risu`；需要其他位置时用 `--workspace`。文件参数在 WSL 下使用 `/mnt/...`，Windows 文件选择器仍使用盘符路径。
 
-## 必须调用 Windows 的服务部署
+## 本机服务的运行方式
 
-Windows 服务仍由计划任务运行，运行依赖装在独立的 Windows 发布目录，不使用开发目录的 Linux node_modules。部署脚本中的源码安装、构建和服务测试已经改为调用 WSL2；任务切换、Windows 生产依赖及回滚继续在 Windows 执行。
+本机服务运行在 WSL2 的 systemd 用户服务 `witch-paintbox.service` 里，用 `.agents/skills/witch-paintbox-operations/scripts/update-server.mjs -Apply` 部署，验收和回滚以[运维技能](../.agents/skills/witch-paintbox-operations/SKILL.md)为准。
 
-在仓库根目录，从 WSL 发起只读检查：
+- 发布目录在 `~/.local/share/witch-paintbox/releases/`，每个版本带独立的 Linux 生产依赖，不使用开发目录的 node_modules；`~/.local/share/witch-paintbox/current` 指向在用的版本。
+- 环境文件是 `~/.config/witch-paintbox/service.env`，每次部署从 `%LOCALAPPDATA%/WitchPaintbox/service.env` 重新生成：令牌原样沿用，盘符路径换算成 `/mnt`。数据目录仍是 `D:\WitchPaintbox\data`，在 WSL 里是 `/mnt/d/WitchPaintbox/data`，没有搬迁。
+- 用户服务随 WSL 实例启动。WSL 实例没有会话时会自动关机，所以 Windows 计划任务 `Witch Paintbox Local Service` 在登录时启动一个不显示窗口的 `wsl.exe` 保活会话，运行 `~/.local/share/witch-paintbox/keepalive.sh`。本机没有免密 sudo，开不了 linger，常驻依赖这个保活。
+- 查看状态用 `systemctl --user status witch-paintbox.service`，日志用 `journalctl --user -u witch-paintbox.service -f`。
 
-```bash
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w .agents/skills/witch-paintbox-operations/scripts/update-server.ps1)"
-```
-
-确需部署源码改动时在末尾加 `-Apply`。仅更新文档、检索 skill 或角色资料时不重启服务。部署验收、队列空闲检查及回滚以运维技能为准。
+仍然必须调用 Windows 的只有这个计划任务，部署脚本通过 `scripts/service-task.ps1` 桥接。迁移前的任务定义备份在 `%LOCALAPPDATA%/WitchPaintbox/backups/task-before-wsl-*.xml`，原先的 Windows 发布目录 `app-monorepo-*` 仍保留在 `%LOCALAPPDATA%/WitchPaintbox/` 下。
 
 Risu 插件安装更新是跨平台 TypeScript 脚本，直接由 WSL Node 执行；不需要 PowerShell，也不因为默认 WSL 而略过其关页确认要求。用法见 [插件更新技能](../packages/plugin-risu/skills/risu-plugin-update/SKILL.md)。
 
