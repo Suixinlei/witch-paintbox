@@ -6,9 +6,19 @@ Windows 路径在 WSL2 内转换为 `/mnt/<盘符>/...`。使用 WSL2 内安装�
 
 仅当操作必须访问 Windows 原生能力（如计划任务、本机 Windows 服务部署、Windows 应用或现有 `.ps1` 运维脚本）时，按对应技能使用 Windows 工具；其余工作继续在 WSL2 中完成。若 WSL2 不可用，明确说明具体阻碍。
 
+# 默认作用域
+
+本项目的 skill 和规则默认全部放在**项目级**，随仓库维护：
+
+- 规则写在本文件（仓库根目录 `AGENTS.md`），不写 `~/.zcode/AGENTS.md`、`~/.codex/AGENTS.md`。
+- skill 放本仓库 `.agents/skills/`，不在 `~/.zcode/skills/`、`~/.agents/skills/`、`~/.codex/skills/` 下建副本或转发入口。
+- 新增、拆分或修改 skill 和规则时都按此落位；只有用户明确要求全局生效时才放用户级。
+
+Risu 存档侧的 skill（`risu-academy-add-character` 等）在相邻 Risu 仓库的 `D:\Projects\risu\.agents\skills\`，属于那个仓库的项目级 skill，该仓库的 `AGENTS.md` 记有同样的两条约定；本项目调用它们时同样遵守本文件。
+
 # 默认角色卡
 
-用户提到卡、加人、删人、条目、世界书、xp 等而不加定语时，默认指《学园重生》卡（chaId `c699b607-5be7-4a2f-9749-8304a53b3231`），不是《调教学园》（조교 아카데미）或其他卡。`add_character.py` 的脚本默认目标仍是「调教学园」，操作这张卡要显式传 `--card 学园重生`。
+用户提到卡、加人、删人、条目、世界书、xp 等而不加定语时，默认指《学园重生》卡（chaId `c699b607-5be7-4a2f-9749-8304a53b3231`），不是《调教学园》（조교 아카데미）或其他卡。本项目内所有 skill 与规则都按这个默认执行。`add_character.py` 的 `--card` 默认值也是「学园重生」；只有用户点名《调教学园》等其他卡时才传 `--card`。
 
 # 项目参考资料
 
