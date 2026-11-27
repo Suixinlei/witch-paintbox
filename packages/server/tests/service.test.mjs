@@ -50,6 +50,113 @@ test('Risu migrates old character outfits once, backs up the original and preser
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+test('Risu portraits endpoint serves panel-sized copies of one card, honours the library revision and the preference', { timeout: 30000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'paintbox-risu-portraits-'));
+  const solid = (width, height, color) => sharp({ create: { width, height, channels: 3, background: color } });
+  const png = await solid(200, 300, '#aa5c72').png().toBuffer();
+  const jpeg = await solid(120, 90, '#5c72aa').jpeg().toBuffer();
+  const webp = await solid(900, 1400, '#72aa5c').webp().toBuffer();
+  const dataUrl = (type, bytes) => `data:${type};base64,${bytes.toString('base64')}`;
+  const anchor = (id, name, aliases, portrait) => ({ id, name, aliases, appearance: '', negative: '', outfits: [], selectedOutfitId: '', portrait, updatedAt: 1 });
+  // Saved before statusPortraits existed; the flag must default on instead of rejecting the file.
+  await writeFile(join(root, 'risu.json'), JSON.stringify({ version: 2, revision: 'rev-1',
+    preferences: { enabled: false, maxIllustrations: 3, dynamicSize: true, maxInputChars: 100000 }, cards: [
+      { card: { chaId: 'card-0', name: '学园' }, library: { backgrounds: [], anchors: [
+        anchor('chenhai', '镇海（Chen Hai）', ['Zhen Hai'], dataUrl('image/png', png)),
+        anchor('lucie', '露琪亚', [], dataUrl('image/jpeg', jpeg)),
+        anchor('plain', '无图', [], null),
+        anchor('broken', '坏图', [], 'data:image/png;base64,bm90IGFuIGltYWdl'),
+      ] } },
+      { card: { chaId: 'card-1', name: '另一张卡' }, library: { backgrounds: [], anchors: [
+        anchor('other', '其他', [], dataUrl('image/webp', webp)),
+      ] } },
+    ] }));
+  assert.equal((await openRisuConfig(root)).snapshot().preferences.statusPortraits, true);
+  const token = randomBytes(32).toString('hex');
+  const risuToken = randomBytes(32).toString('hex');
+  let child;
+  let url;
+  async function start() {
+    child = spawn(process.execPath, [fileURLToPath(new URL('../index.mjs', import.meta.url))], { env: {
+      ...process.env, PAINTBOX_TOKEN: token, PAINTBOX_RISU_TOKEN: risuToken, PAINTBOX_HOST: '127.0.0.1', PAINTBOX_PORT: '0', PAINTBOX_DATA_DIR: root,
+    }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const port = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Service startup timed out')), 5000);
+      let log = '';
+      let stderr = '';
+      child.stderr.on('data', part => { stderr += part.toString(); });
+      child.stdout.on('data', part => {
+        log += part.toString();
+        const address = /127\.0\.0\.1:(\d+)/.exec(log);
+        if (address) { clearTimeout(timer); resolve(address[1]); }
+      });
+      child.once('exit', code => { clearTimeout(timer); reject(new Error(`Service exited (${code}) ${stderr}`)); });
+    });
+    url = `http://127.0.0.1:${port}/v1`;
+  }
+  async function stop() {
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    const exit = once(child, 'exit');
+    child.kill();
+    await exit;
+  };
+  const send = (path, body, key = risuToken) => fetch(`${url}/${path}`, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: { Authorization: `Bearer ${key}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const portraits = async (body, key) => {
+    const response = await send('risu/portraits', body, key);
+    assert.equal(response.status, 200, response.ok ? '' : await response.text());
+    assert.equal(response.headers.get('Content-Type'), PACKET_TYPE);
+    const { value, blobs } = await unpack(await response.blob());
+    return { ...value, blobs };
+  };
+  try {
+    await start();
+    assert.equal((await send('risu/portraits', { cardId: 'card-0' }, 'invalid')).status, 401);
+    const first = await portraits({ cardId: 'card-0' });
+    assert.equal(first.revision, 'rev-1');
+    assert.deepEqual(first.portraits, [
+      { id: 'chenhai', name: '镇海（Chen Hai）', aliases: ['Zhen Hai'], blobIndex: 0 },
+      { id: 'lucie', name: '露琪亚', aliases: [], blobIndex: 1 },
+    ], 'portraits without an image and undecodable images are skipped');
+    assert.deepEqual(first.blobs.map(blob => blob.type), ['image/webp', 'image/webp']);
+    assert.deepEqual(await sharp(Buffer.from(await first.blobs[0].arrayBuffer())).metadata().then(({ format, width, height }) => ({ format, width, height })),
+      { format: 'webp', width: 200, height: 300 }, 'small portraits are not enlarged');
+    const stale = await send('risu/portraits', { cardId: 'card-0', revision: 'rev-1' });
+    assert.deepEqual(await stale.json(), { revision: 'rev-1', unchanged: true });
+    const second = await portraits({ cardId: 'card-1' });
+    assert.deepEqual(second.portraits.map(({ id }) => id), ['other']);
+    const large = await sharp(Buffer.from(await second.blobs[0].arrayBuffer())).metadata();
+    assert.ok(large.format === 'webp' && large.width <= 640 && large.height <= 960 && Math.max(large.width, large.height) === 960);
+    assert.deepEqual((await portraits({ cardId: 'unknown' }, token)).portraits, []);
+    for (const body of [{}, { cardId: 'not an id' }, { cardId: 'card-0', revision: 7 }]) {
+      assert.equal((await send('risu/portraits', body)).status, 400);
+    }
+    const off = { enabled: false, maxIllustrations: 3, dynamicSize: true, maxInputChars: 100000, statusPortraits: false };
+    const saved = await send('admin/risu/preferences', { revision: 'rev-1', preferences: off }, token);
+    assert.equal(saved.status, 200);
+    const next = (await saved.json()).revision;
+    assert.notEqual(next, 'rev-1');
+    assert.deepEqual(await (await send('risu/preferences')).json(), off);
+    const disabled = await portraits({ cardId: 'card-0', revision: 'rev-1' });
+    assert.equal(disabled.revision, next);
+    assert.deepEqual([disabled.portraits, disabled.blobs.length], [[], 0], 'a stale revision is never reported as unchanged');
+    assert.deepEqual(await (await send('risu/portraits', { cardId: 'card-0', revision: next })).json(), { revision: next, unchanged: true });
+    await stop();
+    await start();
+    assert.deepEqual(await (await send('risu/preferences')).json(), off);
+    assert.deepEqual((await portraits({ cardId: 'card-0' })).portraits, []);
+    const on = await send('admin/risu/preferences', { revision: next, preferences: { ...off, statusPortraits: true } }, token);
+    assert.equal((await portraits({ cardId: 'card-0' })).portraits.length, 2);
+    assert.equal((await send('risu/portraits', { cardId: 'card-0', revision: (await on.json()).revision })).status, 200);
+  } finally {
+    await stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('Risu planning output keeps environmental tags global and expands unambiguous short names', async () => {
   const { anchors } = risuLibrary({ card: {}, library: { people: [
     { id: 'lumi', name: '露米（Lumi）', appearance: 'white hair' },

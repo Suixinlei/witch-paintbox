@@ -133,7 +133,7 @@ async function loadRisu() {
 prefsForm.addEventListener('submit', async event => {
   event.preventDefault();
   const fields = prefsForm.querySelector('fieldset');
-  const { enabled, maxIllustrations, dynamicSize, maxInputChars } = prefsForm.elements;
+  const { enabled, maxIllustrations, dynamicSize, maxInputChars, statusPortraits } = prefsForm.elements;
   const revision = risuState.revision;
   fields.disabled = true;
   status('risu-status', '正在保存…');
@@ -141,6 +141,7 @@ prefsForm.addEventListener('submit', async event => {
     const saved = await json('admin/risu/preferences', { revision, preferences: {
       enabled: enabled.checked, maxIllustrations: maxIllustrations.valueAsNumber,
       dynamicSize: dynamicSize.checked, maxInputChars: maxInputChars.valueAsNumber,
+      statusPortraits: statusPortraits.checked,
     } });
     risuState.revision = saved.revision;
     if (cardDraft?.revision === revision) cardDraft.revision = saved.revision;

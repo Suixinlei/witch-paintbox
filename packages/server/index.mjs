@@ -16,7 +16,7 @@ import { historyScope } from '@witch-paintbox/plugin-sifang/runtime/image-histor
 import { prepareImagePrompt } from '@witch-paintbox/plugin-sifang/runtime/image-prompt.js';
 import { defaultSettings } from '@witch-paintbox/plugin-sifang/runtime/settings.js';
 import { createImageJobs } from './jobs.mjs';
-import { openRisuConfig, risuCardId, risuLibrary } from './risu.mjs';
+import { openRisuConfig, createPortraitThumbnails, risuCardId, risuLibrary } from './risu.mjs';
 import { bounds, historyDraft, invalid, object, readBody, readJson, readPacket, RequestError, sendJson, sendPacket, text } from './request.mjs';
 
 const hash = x => createHash('sha256').update(x).digest();
@@ -29,7 +29,7 @@ const risuToken = env.PAINTBOX_RISU_TOKEN;
 if (risuToken && (!/^[\x21-\x7e]{24,512}$/.test(risuToken) || risuToken === token)) throw new Error('Risu 须使用独立的访问令牌。');
 const risuTokenHash = risuToken ? hash(`Bearer ${risuToken}`) : null;
 const risuScope = scope => typeof scope === 'string' && scope.startsWith('risu:');
-const risuRoutes = new Set(['GET /v1/health', 'GET /v1/risu/preferences', 'POST /v1/plan', 'POST /v1/images', 'POST /v1/history/image']);
+const risuRoutes = new Set(['GET /v1/health', 'GET /v1/risu/preferences', 'POST /v1/plan', 'POST /v1/images', 'POST /v1/history/image', 'POST /v1/risu/portraits']);
 const host = env.PAINTBOX_HOST || '127.0.0.1';
 const port = Number(env.PAINTBOX_PORT || 4783);
 if (!bounds(port, 0, 65535)) throw new Error('服务端口无效。');
@@ -37,6 +37,7 @@ const origins = new Set((env.PAINTBOX_ORIGINS || '').split(',').map(value => val
 const directory = resolve(env.PAINTBOX_DATA_DIR || 'paintbox-data');
 const config = await openServiceConfig(directory);
 const risu = await openRisuConfig(directory);
+const portraitThumbnails = createPortraitThumbnails();
 const library = await openLibrary(directory, async entry => {
   if (!entry.scenePrompt) return undefined;
   const scope = historyScope(entry.markerKey);
@@ -129,6 +130,24 @@ async function route(req, res, signal, isRisu) {
   }
   if (req.method === 'GET' && path === '/v1/history/categories') return sendJson(res, library.categories());
   if (req.method !== 'POST') throw new RequestError('独立服务接口不存在。', 404);
+  if (path === '/v1/risu/portraits') {
+    const data = await readJson(req);
+    if (!risuCardId(data.cardId) || (data.revision !== undefined && !risuCardId(data.revision))) invalid();
+    const { revision, preferences } = risu.snapshot();
+    if (data.revision === revision) return sendJson(res, { revision, unchanged: true });
+    const portraits = [];
+    const blobs = [];
+    for (const { id, name, aliases, portrait } of preferences.statusPortraits ? risu.card(data.cardId)?.library.anchors ?? [] : []) {
+      if (!portrait) continue;
+      try { blobs.push(new Blob([await portraitThumbnails(portrait)], { type: 'image/webp' })); }
+      catch {
+        console.warn('画匣服务跳过了一张无法解码的人设图。');
+        continue;
+      }
+      portraits.push({ id, name, aliases: [...aliases], blobIndex: blobs.length - 1 });
+    }
+    return sendPacket(res, packet({ revision, portraits }, blobs));
+  }
   if (path === '/v1/admin/risu/preferences') return sendJson(res, { revision: await risu.savePreferences(await readJson(req), signal) });
   if (path === '/v1/admin/risu/cards') return sendJson(res, { revision: await risu.putCards(await readJson(req, 128 * 1024 * 1024), signal) });
   if (path === '/v1/admin/risu/card') {
@@ -296,6 +315,10 @@ const server = createServer(async (req, res) => {
   }
 });
 server.listen(port, host, () => console.log(`魔女画匣服务监听 ${host}:${server.address().port}`));
+// Portraits are encoded on demand; encoding them once here keeps the first status panel
+// shown after a restart from waiting on the encoder.
+for (const { library } of risu.snapshot().cards)
+  for (const { portrait } of library.anchors) if (portrait) portraitThumbnails(portrait).catch(() => {});
 
 async function cleanExpired() {
   const days = config.snapshot()?.preferences.imageRetentionDays;

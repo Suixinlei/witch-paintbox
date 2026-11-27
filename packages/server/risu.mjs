@@ -1,16 +1,20 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { copyFile, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import sharp from 'sharp';
 import { bounds, invalid, object, RequestError, text } from './request.mjs';
 
-export const risuDefaults = { enabled: false, maxIllustrations: 3, dynamicSize: true, maxInputChars: 100_000 };
+export const risuDefaults = { enabled: false, maxIllustrations: 3, dynamicSize: true, maxInputChars: 100_000, statusPortraits: true };
 export const risuCardId = value => typeof value === 'string' && /^[\w-]{1,128}$/.test(value);
 
 function preferences(value) {
+  // statusPortraits was added after the first saves; a save without it keeps the panel portraits on.
+  value = { statusPortraits: true, ...value };
   if (!object(value) || typeof value.enabled !== 'boolean' || !bounds(value.maxIllustrations, 1, 6)
-    || typeof value.dynamicSize !== 'boolean' || !bounds(value.maxInputChars, 1000, 262144)) invalid();
-  const { enabled, maxIllustrations, dynamicSize, maxInputChars } = value;
-  return { enabled, maxIllustrations, dynamicSize, maxInputChars };
+    || typeof value.dynamicSize !== 'boolean' || !bounds(value.maxInputChars, 1000, 262144)
+    || typeof value.statusPortraits !== 'boolean') invalid();
+  const { enabled, maxIllustrations, dynamicSize, maxInputChars, statusPortraits } = value;
+  return { enabled, maxIllustrations, dynamicSize, maxInputChars, statusPortraits };
 }
 
 function cardRecord(value, legacy = false) {
@@ -121,4 +125,22 @@ function legacyAnchors(people) {
       .map(outfit => ({ id: string(outfit.id), name: string(outfit.name), tags: string(outfit.description) }))
       .filter(outfit => outfit.id && outfit.name && outfit.tags),
   }));
+}
+
+const portraitThumb = { width: 640, height: 960 };
+
+/** Panel-sized WebP copies of saved portraits; the same portrait is encoded once. */
+export function createPortraitThumbnails() {
+  const cache = new Map();
+  return async portrait => {
+    const key = createHash('sha256').update(portrait).digest('hex');
+    let task = cache.get(key);
+    if (!task) {
+      task = sharp(Buffer.from(portrait.slice(portrait.indexOf(',') + 1), 'base64'), { limitInputPixels: 4096 * 4096, failOn: 'error' })
+        .rotate().resize({ ...portraitThumb, fit: 'inside', withoutEnlargement: true }).webp({ quality: 78 }).toBuffer()
+        .catch(error => { cache.delete(key); throw error; });
+      cache.set(key, task);
+    }
+    return task;
+  };
 }
