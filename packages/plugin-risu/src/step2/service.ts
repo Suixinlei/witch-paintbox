@@ -2,73 +2,29 @@ import type { RisuApi } from "../host/api";
 import type { HostContext } from "../host/context";
 import type { Storage } from "../shared/storage";
 import type { Runtime } from "../shared/events";
-import type { Model } from "../shared/model";
-import type {
-  GenerationState,
-  GenerationSettings,
-  GenerationJob,
-  LibraryData,
-  LibraryReader,
-} from "../domain/types";
+import type { GenerationState, GenerationJob } from "../domain/types";
 import { statusLabel, errorText } from "../shared/text";
-import { createLmStudio } from "./lmStudio";
-import { createComposition } from "./composition";
 import { createAttachments } from "./attachments";
 import { createWorker } from "./worker";
 import { createPreview } from "./preview";
-import { validateAutomatic } from "./validation";
-import { jobStorage, AutomaticJobsStorageError } from "./jobStorage";
-import {
-  createPaintbox,
-  imageDataUrl,
-  type PaintboxConnection,
-} from "./paintbox";
+import { jobStorage } from "./jobStorage";
+import { createPaintbox, type PaintboxConnection } from "./paintbox";
 
 type GenerationHost = Pick<
   RisuApi,
-  | "nativeFetch"
-  | "saveAsset"
-  | "generateNovelAIImage"
-  | "appendMessageImages"
-  | "setMessageImageStatus"
-  | "pluginStorage"
+  "nativeFetch" | "saveAsset" | "appendMessageImages" | "setMessageImageStatus"
 >;
 export function createGenerationService(deps: {
   api: GenerationHost;
   context: HostContext;
   storage: Storage;
   runtime: Runtime;
-  model: Model;
-  library: LibraryReader;
   state: GenerationState;
 }) {
   const { api, storage, runtime, state } = deps;
   const paintbox = createPaintbox(api, () => state.paintboxConnection);
-  // A long queue used to persist one full library snapshot per job and rewrite
-  // the whole array on every status change. Keep one shared snapshot per
-  // character revision and bound the finished-job history instead.
-  const librarySnapshots = new Map<string, LibraryData>();
-  let librariesPending = true;
+  // Finished jobs still answer regenerate and fill on their reply, so bound how many are kept.
   const FinishedJobsKept = 80;
-  const libraryKey = (job: GenerationJob) =>
-    job.source.characterId + ":" + job.libraryRevision;
-  function hasLibrary(library?: LibraryData) {
-    return (
-      !!library && (library.people.length > 0 || library.backgrounds.length > 0)
-    );
-  }
-  function rememberLibraries() {
-    let added = false;
-    for (const job of state.jobs) {
-      if (!job.libraryRevision || !hasLibrary(job.savedLibrary)) continue;
-      const key = libraryKey(job);
-      if (!librarySnapshots.has(key)) {
-        librarySnapshots.set(key, job.savedLibrary);
-        added = true;
-      }
-    }
-    return added;
-  }
   function pruneFinishedJobs() {
     const finished = state.jobs.filter(
       (job) => job.state === "complete" || job.state === "error",
@@ -106,10 +62,7 @@ export function createGenerationService(deps: {
   let jobsRevision = 0;
   let pendingSave: Promise<void> | undefined;
   function persistAutomaticJobs() {
-    librariesPending = rememberLibraries() || librariesPending;
     pruneFinishedJobs();
-    // Finished jobs share the revision snapshot file; storing it inside every
-    // job made the queue file grow by ~30 KB per image.
     jobsRevision++;
     if (!pendingSave) {
       pendingSave = Promise.resolve()
@@ -117,25 +70,7 @@ export function createGenerationService(deps: {
           let savedRevision: number;
           do {
             savedRevision = jobsRevision;
-            const snapshot = structuredClone(
-              state.jobs.map((job) => ({
-                ...job,
-                savedLibrary: { people: [], backgrounds: [] } as LibraryData,
-              })),
-            );
-            if (librariesPending) {
-              librariesPending = false;
-              try {
-                await storage.write(
-                  "automatic-libraries",
-                  Object.fromEntries(librarySnapshots),
-                );
-              } catch (error) {
-                librariesPending = true;
-                throw new AutomaticJobsStorageError(error);
-              }
-            }
-            await jobStorage(storage).write(snapshot);
+            await jobStorage(storage).write(structuredClone(state.jobs));
           } while (savedRevision !== jobsRevision);
         })
         .finally(() => {
@@ -158,20 +93,13 @@ export function createGenerationService(deps: {
         other !== job &&
         !other.supersededBy &&
         (job.replaceReplyImages
-          ? !!job.illustrationBatch &&
+          ? !!other.illustrationBatch &&
             other.illustrationBatch === job.illustrationBatch
           : !other.replaceReplyImages && other.eventKey === job.eventKey),
     );
     const isPending = (job: GenerationJob) =>
       !job.awaitingClick &&
-      ([
-        "pending",
-        "preparing",
-        "ready",
-        "submitting",
-        "queued",
-        "waiting",
-      ].includes(job.state) ||
+      (["pending", "preparing", "ready", "submitting"].includes(job.state) ||
         (job.state === "complete" &&
           !job.noIllustrations &&
           !["attached", "error"].includes(job.attachmentState ?? "")));
@@ -212,10 +140,6 @@ export function createGenerationService(deps: {
     await publishMessageImageStatus(job);
     runtime.notify(false);
   }
-  const composition = createComposition(
-    deps.model,
-    createLmStudio(api, runtime),
-  );
   const attachments = createAttachments({
     api,
     storage,
@@ -228,50 +152,29 @@ export function createGenerationService(deps: {
   const worker = createWorker({
     ...deps,
     paintbox,
-    composition,
     attachments,
     markAuto,
     persistAutomaticJobs,
     publishMessageImageStatus,
   });
-  const preview = createPreview({ ...deps, worker, composition, paintbox });
+  const preview = createPreview({ ...deps, worker, paintbox });
   async function recover() {
-    if (state.settings.execution !== "legacy")
-      state.settings.enabled = state.paintboxConnection
-        ? await paintbox.preferences().catch(() => false)
-        : false;
+    state.enabled = state.paintboxConnection
+      ? await paintbox.preferences().catch(() => false)
+      : false;
     let changed = false;
     for (const job of state.jobs) {
-      if (
-        job.settings.execution === "paintbox" &&
-        !job.manual &&
-        job.state === "ready" &&
-        job.awaitingClick !== false
-      ) {
+      // Plans made before automatic drawing still wait for a click after a reload.
+      if (job.state === "ready" && !job.manual && job.awaitingClick !== false) {
         job.awaitingClick = true;
         changed = true;
       }
-      if (
-        !job.settings.planningModel &&
-        job.settings.execution !== "paintbox" &&
-        !["complete", "error"].includes(job.state)
-      ) {
+      if (job.state !== "error" && job.modelRequestState === "started") {
         job.state = "error";
-        job.error = "旧版生图任务已停止，可在 NovelAI 流程中重新补图";
-        changed = true;
-        continue;
-      }
-      if (
-        job.state !== "error" &&
-        job.modelRequestState === "started" &&
-        !job.raw &&
-        !job.promptId
-      ) {
-        job.state = "error";
-        job.error = "上次模型请求结果未保存，未自动重发";
+        job.error = "上次配图请求结果未保存，未自动重发";
         changed = true;
       }
-      if (job.state === "submitting" && !job.promptId) {
+      if (job.state === "submitting") {
         job.state = "uncertain";
         job.error = "上次提交响应未保存，未自动重试以避免重复生图";
         changed = true;
@@ -296,46 +199,21 @@ export function createGenerationService(deps: {
       }
     }
     for (const job of state.jobs.filter((job) =>
-      [
-        "pending",
-        "preparing",
-        "ready",
-        "submitting",
-        "queued",
-        "waiting",
-        "uncertain",
-      ].includes(job.state),
+      ["pending", "preparing", "ready", "submitting", "uncertain"].includes(
+        job.state,
+      ),
     ))
       await publishMessageImageStatus(job);
     void attachments.reconcileInlineImages();
     void worker.drainAutomatic();
-  }
-  async function saveSettings(next: GenerationSettings) {
-    try {
-      validateAutomatic(next);
-      if (
-        next.enabled &&
-        next.execution !== "legacy" &&
-        !state.paintboxConnection
-      )
-        throw new Error("请先连接魔女画匣独立服务，再开启自动配图");
-      await storage.write("automatic-config", next);
-      state.settings = next;
-      runtime.status = next.enabled
-        ? "自动生图已开启，只处理后续助手输出及本地队列"
-        : "自动生图已暂停，已开始的任务继续完成，队列保留";
-      runtime.notify();
-      void worker.drainAutomatic();
-    } catch (error) {
-      runtime.status = errorText(error);
-      runtime.notify(false);
-    }
   }
   async function connectPaintbox(values: PaintboxConnection) {
     try {
       const connection = await paintbox.connect(values);
       await storage.write("paintbox-connection", connection);
       state.paintboxConnection = connection;
+      // Jobs queued while the service was out of reach start once it allows.
+      state.enabled = await paintbox.preferences().catch(() => false);
       runtime.status = "已连接魔女画匣独立服务";
       worker.drainAutomatic();
     } catch (error) {
@@ -343,21 +221,13 @@ export function createGenerationService(deps: {
     }
     runtime.notify();
   }
-  async function historyImage(jobId: string, index: number) {
-    const job = state.jobs.find((item) => item.id === jobId);
-    if (job?.serviceImageId && index === 0)
-      return imageDataUrl(await paintbox.image(job.serviceImageId));
-    return storage.read<string>("automatic-image-" + jobId + "-" + index);
-  }
   return {
     state,
     ...worker,
     ...preview,
     ...attachments,
     recover,
-    saveSettings,
     connectPaintbox,
-    historyImage,
   };
 }
 export type GenerationService = ReturnType<typeof createGenerationService>;

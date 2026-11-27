@@ -2,7 +2,9 @@ import type { GenerationJob } from "../domain/types";
 import type { Storage } from "../shared/storage";
 import { digestHex } from "../shared/webcrypto";
 
-type JobContext = Pick<GenerationJob, "settings" | "pair">;
+type JobContext = Pick<GenerationJob, "pair">;
+/** Snapshots written before 2.6.0 also carry the plugin's local settings of that time. */
+type StoredContext = JobContext & { settings?: unknown };
 type StoredJob = Omit<GenerationJob, keyof JobContext> & { contextRef: string };
 export interface JobIndex {
   version: 2;
@@ -19,12 +21,20 @@ export class AutomaticJobsStorageError extends Error {
   }
 }
 
-/** Legacy arrays remain readable. V2 commits contexts before the small index. */
+/**
+ * Arrays from before 2.5.2 remain readable; the local settings they repeated in
+ * every record are dropped. V2 commits contexts before the small index.
+ */
 export function expandJobIndex(
   value: GenerationJob[] | JobIndex,
   context: (ref: string) => JobContext,
 ): GenerationJob[] {
-  if (Array.isArray(value)) return value;
+  if (Array.isArray(value))
+    return value.map((job) => {
+      const record = job as GenerationJob & { settings?: unknown };
+      delete record.settings;
+      return record;
+    });
   if (value.version !== 2 || !Array.isArray(value.jobs))
     throw new Error("魔女画匣任务文件版本无法读取，原文件已保留");
   return value.jobs.map(({ contextRef, ...job }) => ({
@@ -69,15 +79,17 @@ function createJobStorage(storage: Storage) {
         for (let offset = 0; offset < refs.length; offset += 8) {
           await Promise.all(
             refs.slice(offset, offset + 8).map(async (ref) => {
-              const context = await retry(() =>
-                storage.read<JobContext>(filename(ref)),
+              const stored = await retry(() =>
+                storage.read<StoredContext>(filename(ref)),
               );
-              if (!context)
+              if (!stored)
                 throw new Error(
-                  "魔女画匣任务的正文与设置快照缺失，原任务文件已保留",
+                  "魔女画匣任务的正文快照缺失，原任务文件已保留",
                 );
-              contexts.set(ref, context);
-              references.set(JSON.stringify(context), ref);
+              // Only the reply is read. A snapshot that also holds settings stays
+              // in use under its own name, so nothing is rewritten or orphaned.
+              contexts.set(ref, { pair: stored.pair });
+              references.set(JSON.stringify(contexts.get(ref)), ref);
               committed.add(ref);
             }),
           );
@@ -88,14 +100,13 @@ function createJobStorage(storage: Storage) {
     async write(jobs: GenerationJob[]) {
       try {
         const rows: StoredJob[] = [];
-        for (const { settings, pair, ...job } of jobs) {
-          const context = { settings, pair };
+        for (const { pair, ...job } of jobs) {
+          const context: JobContext = { pair };
           const serialized = JSON.stringify(context);
           let ref = references.get(serialized);
           if (!ref) {
             ref = await digestHex(serialized);
             references.set(serialized, ref);
-            contexts.set(ref, context);
           }
           if (!committed.has(ref)) {
             await retry(() => storage.write(filename(ref), context));

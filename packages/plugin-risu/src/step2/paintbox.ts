@@ -1,6 +1,5 @@
 import type { Illustration, Pair } from "../domain/types";
 import type { RisuApi } from "../host/api";
-import { illustrationPoints } from "./illustrations";
 import { SERVICE_VERSION } from "../../../plugin-sifang/src/service-protocol";
 
 export interface PaintboxConnection {
@@ -11,8 +10,11 @@ export interface Portrait {
   id: string;
   name: string;
   aliases: string[];
-  /** Data URL of the panel-sized copy. */
-  image: string;
+  /** Service-relative links: the panel-sized copy, and the saved original when the service has one. */
+  thumb: string;
+  full?: string;
+  /** Width over height of the copy. */
+  ratio: number;
 }
 
 export function imageDataUrl({
@@ -28,15 +30,11 @@ export function imageDataUrl({
   return `data:${mime};base64,${btoa(parts.join(""))}`;
 }
 
-interface Picture {
-  illustration: Illustration;
-  image?: { id: string; bytes: Uint8Array<ArrayBuffer>; mime: string };
-  error?: string;
-}
-
 const mimeTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
 const packetType = "application/vnd.witch-paintbox.v1";
 const invalid = () => new Error("独立服务返回的配图数据格式无效");
+/** The most illustrations the service may plan for one reply. */
+const maxIllustrations = 6;
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -103,17 +101,43 @@ function normalizeConnection(
   return { url: url.origin, token };
 }
 
+const excluded =
+  /<(think|thoughts|thinking|analysis|statusData|image_prompt|UpdateVariable|script|style|pre|code)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|(?![\s\S]))|<!--[^]*?(?:-->|(?![\s\S]))|^ {0,3}(`{3,}|~{3,})[^\r\n]*\r?\n[^]*?(?:^ {0,3}\2[ \t]*(?=\r?$)|(?![\s\S]))/gim;
+
+/** End offsets of the prose lines that may carry an illustration. */
+function illustrationPoints(raw: string) {
+  const hidden = [...raw.matchAll(excluded)].map((match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
+  const points = new Set<number>();
+  let region = 0;
+  for (const match of raw.matchAll(/[^\r\n]+/g)) {
+    const line = match[0];
+    const end = match.index + line.length;
+    while (hidden[region]?.end <= match.index) region++;
+    if (
+      hidden[region]?.start < end ||
+      /<[^>]*>|^ {4}|^\t/.test(line) ||
+      !line.trim()
+    )
+      continue;
+    points.add(end);
+  }
+  return points;
+}
+
 /** Preserve the raw UTF-16 positions used by the Risu message-image API. */
-function sourceForPlan(pair: Pair, maxInputChars: number) {
+function sourceForPlan(pair: Pair) {
   const raw = pair.rawAssistantMessage ?? pair.assistantMessage;
-  const { points } = illustrationPoints(raw);
-  const ends = new Set(points.values());
+  const ends = illustrationPoints(raw);
+  const last = [...ends].at(-1) ?? 0;
   const source = raw
     .replace(/[^\r\n]+/g, (line: string, index: number) =>
       ends.has(index + line.length) ? line : " ".repeat(line.length),
     )
-    .slice(0, [...ends].at(-1) ?? 0);
-  if (source.length > Math.min(maxInputChars, 256 * 1024))
+    .slice(0, last);
+  if (source.length > 256 * 1024)
     throw new Error("正文超过独立服务配图长度上限");
   return source;
 }
@@ -165,52 +189,25 @@ export function createPaintbox(
     return checked;
   }
 
+  /** Asks the service where the reply carries illustrations and what each shows. */
   async function plan(
     pair: Pair,
-    maxInputChars: number,
-    maxImages: number,
-    draw?: {
-      scope: string;
-      chatId: string;
-      historyId: string;
-      sourceName: string;
-      dynamicSize?: boolean;
-    },
-    risu?: { cardId: string; automatic: boolean },
-  ): Promise<Picture[]> {
-    const original = sourceForPlan(pair, risu ? 256 * 1024 : maxInputChars);
+    risu: { cardId: string; automatic: boolean },
+  ): Promise<Illustration[]> {
+    const original = sourceForPlan(pair);
     if (!original.trim()) return [];
     const { value, images } = await unpack(
-      await request(
-        "plan",
-        {
-          original,
-          excludedTags: [],
-          ...(risu ? { risu } : { maxImages }),
-          ...(draw ? { draw: { ...draw, delay: 0 } } : {}),
-        },
-        draw ? 3_900_000 : 320_000,
-      ),
+      await request("plan", { original, excludedTags: [], risu }, 320_000),
     );
     if (
       !Array.isArray(value.added) ||
-      value.added.length > (risu ? 6 : maxImages) ||
-      (draw
-        ? !Array.isArray(value.pictures) ||
-          value.pictures.length !== value.added.length
-        : value.pictures !== undefined || images.length !== 0)
+      value.added.length > maxIllustrations ||
+      value.pictures !== undefined ||
+      images.length !== 0
     )
       throw invalid();
-    const byStart = new Map<number, Record<string, unknown>>();
-    for (const item of (value.pictures ?? []) as unknown[]) {
-      const picture = record(item);
-      if (typeof picture.start !== "number" || byStart.has(picture.start))
-        throw invalid();
-      byStart.set(picture.start, picture);
-    }
-    const used = new Set<number>();
     const starts = new Set<number>();
-    const pictures = value.added.map((item: unknown): Picture => {
+    return value.added.map((item: unknown): Illustration => {
       const { start, sourceOffset, summary, prompt, size } = record(item);
       if (
         typeof start !== "number" ||
@@ -232,40 +229,14 @@ export function createPaintbox(
         (/\r\n$|[\r\n]$/.exec(
           original.slice(Math.max(0, sourceOffset - 2), sourceOffset),
         )?.[0].length ?? 0);
-      const illustration: Illustration = {
+      return {
         at: String(offset),
         offset,
         summary,
         prompt,
-        characters: [],
-        ...(draw?.dynamicSize !== false && typeof size === "string"
-          ? { size }
-          : {}),
+        ...(typeof size === "string" ? { size } : {}),
       };
-      if (!draw) return { illustration };
-      const picture = byStart.get(start);
-      if (!picture) throw invalid();
-      const error =
-        typeof picture.error === "string" ? picture.error : undefined;
-      if (picture.entry === undefined && error) return { illustration, error };
-      const { id, markerKey } = record(picture.entry);
-      const index = picture.blobIndex;
-      if (
-        typeof id !== "string" ||
-        !id ||
-        typeof markerKey !== "string" ||
-        markerKey !== picture.markerKey ||
-        typeof index !== "number" ||
-        !Number.isSafeInteger(index) ||
-        !images[index] ||
-        used.has(index)
-      )
-        throw invalid();
-      used.add(index);
-      return { illustration, image: { id, ...images[index] }, error };
     });
-    if (used.size !== images.length) throw invalid();
-    return pictures;
   }
 
   async function draw(
@@ -289,6 +260,7 @@ export function createPaintbox(
     };
   }
 
+  /** The stored original, read again when an image is attached after a reload. */
   async function image(id: string) {
     const { value, images } = await unpack(
       await request("history/image", { id }, 30_000),
@@ -311,46 +283,65 @@ export function createPaintbox(
     return data.enabled;
   }
 
-  /** Portraits of one card; the service answers without images while `revision` is current. */
+  /** Portraits of one card as links the page loads itself; the service answers without them while `revision` is current. */
   async function portraits(cardId: string, revision?: string) {
-    const response = await request(
-      "risu/portraits",
-      { cardId, ...(revision ? { revision } : {}) },
-      8000,
+    const data = record(
+      await (
+        await request(
+          "risu/portraits",
+          { cardId, links: true, ...(revision ? { revision } : {}) },
+          8000,
+        )
+      ).json(),
     );
-    if (response.headers.get("Content-Type")?.split(";")[0] !== packetType) {
-      const data = record(await response.json());
-      if (data.revision !== revision || data.unchanged !== true)
-        throw invalid();
+    if (data.unchanged === true) {
+      if (data.revision !== revision) throw invalid();
       return { revision, unchanged: true as const };
     }
-    const { value, images } = await unpack(response);
     if (
-      (typeof value.revision !== "string" && value.revision !== null) ||
-      !Array.isArray(value.portraits) ||
-      value.portraits.length !== images.length
+      (data.revision !== null &&
+        (typeof data.revision !== "string" || !data.revision)) ||
+      !Array.isArray(data.portraits)
     )
       throw invalid();
-    const used = new Set<number>();
-    const loaded = value.portraits.map((item: unknown): Portrait => {
-      const { id, name, aliases, blobIndex } = record(item);
+    // The links go into CSS verbatim, so nothing outside this exact shape is accepted.
+    const copy = /^\/v1\/risu\/portrait\/[\w-]{1,128}\/[a-f0-9]{32}\.webp$/;
+    const original =
+      /^\/v1\/risu\/portrait\/[\w-]{1,128}\/[a-f0-9]{32}\.full\.(png|jpeg|webp)$/;
+    const size = (value: unknown): value is number =>
+      typeof value === "number" &&
+      Number.isSafeInteger(value) &&
+      value > 0 &&
+      value <= 16384;
+    const loaded = data.portraits.map((item: unknown): Portrait => {
+      const { id, name, aliases, thumb, full, width, height } = record(item);
       if (
         typeof id !== "string" ||
         !id ||
         typeof name !== "string" ||
         !Array.isArray(aliases) ||
         aliases.some((alias) => typeof alias !== "string") ||
-        typeof blobIndex !== "number" ||
-        !Number.isSafeInteger(blobIndex) ||
-        !images[blobIndex] ||
-        used.has(blobIndex)
+        typeof thumb !== "string" ||
+        !copy.test(thumb) ||
+        !size(width) ||
+        !size(height) ||
+        (full !== undefined &&
+          (typeof full !== "string" ||
+            !original.test(full) ||
+            !full.startsWith(thumb.slice(0, -5) + ".full.")))
       )
         throw invalid();
-      used.add(blobIndex);
-      return { id, name, aliases, image: imageDataUrl(images[blobIndex]) };
+      return {
+        id,
+        name,
+        aliases,
+        thumb,
+        ...(full === undefined ? {} : { full }),
+        ratio: width / height,
+      };
     });
     return {
-      revision: value.revision as string | null,
+      revision: data.revision as string | null,
       unchanged: false as const,
       portraits: loaded,
     };

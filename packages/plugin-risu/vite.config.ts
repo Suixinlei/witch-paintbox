@@ -6,7 +6,7 @@ export default defineConfig({
     target: "es2022",
     lib: {
       entry: "src/main.ts",
-      name: "RisuComfyImagePlugin",
+      name: "RisuPaintboxPlugin",
       formats: ["iife"],
       fileName: () => "plugin.js",
     },

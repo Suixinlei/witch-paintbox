@@ -14,10 +14,6 @@ test("service mode keeps one navigation and delegates configuration to the servi
     return route.fulfill({ status: 404 });
   });
   await page.goto("/e2e/fixture/");
-  await page.evaluate(() =>
-    window.harness.configure({ execution: "paintbox", enabled: false }),
-  );
-  await page.reload();
   await page
     .getByLabel("Risu 专用服务令牌")
     .fill("fixture-consumer-token-0000");
@@ -26,7 +22,6 @@ test("service mode keeps one navigation and delegates configuration to the servi
   await expect(page.getByRole("navigation").getByRole("button")).toHaveText([
     "服务连接",
     "配图",
-    "生图回顾",
   ]);
   await expect(
     page.getByRole("link", { name: "服务管理台 ↗" }),
@@ -37,11 +32,11 @@ test("service mode keeps one navigation and delegates configuration to the servi
   await expect(page.getByLabel("服务管理员令牌", { exact: true })).toHaveCount(
     0,
   );
-  await expect(
-    page.getByRole("button", { name: "Risu 角色卡", exact: true }),
-  ).toHaveCount(0);
   await page.getByRole("button", { name: "配图", exact: true }).click();
   await expect(page.getByRole("navigation")).toHaveCount(1);
+  await expect(
+    page.getByRole("heading", { name: "配图概括与生图" }),
+  ).toBeVisible();
   expect(
     requested.some(
       (path) => path.includes("/admin/") || path.endsWith("/config"),

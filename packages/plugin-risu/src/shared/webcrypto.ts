@@ -1,11 +1,10 @@
 /**
  * Web Crypto entry points that keep working outside secure contexts.
  *
- * Browsers only expose `crypto.subtle` and `crypto.randomUUID` on HTTPS or
- * localhost. A plugin opened from another device over plain HTTP (e.g.
- * `http://192.168.1.10:6001`) gets neither, which previously broke job
- * enqueueing and library editing. These helpers fall back to deterministic
- * local implementations so the plugin keeps working there.
+ * Browsers only expose `crypto.subtle` on HTTPS or localhost. A plugin opened
+ * from another device over plain HTTP (e.g. `http://192.168.1.10:6001`) gets
+ * none, which previously broke job enqueueing. This helper falls back to a
+ * deterministic local implementation so the plugin keeps working there.
  */
 
 /** 128-bit non-cryptographic digest used only for local dedupe keys. */
@@ -48,25 +47,4 @@ export async function digestHex(input: string): Promise<string> {
       ),
     );
   return fallbackDigest(input);
-}
-
-/** UUID v4 via Web Crypto when available, otherwise from getRandomValues. */
-export function uuid(): string {
-  const randomUUID = globalThis.crypto?.randomUUID;
-  if (typeof randomUUID === "function") return randomUUID.call(crypto);
-  const bytes = new Uint8Array(16);
-  const getRandomValues = globalThis.crypto?.getRandomValues;
-  if (typeof getRandomValues === "function")
-    getRandomValues.call(globalThis.crypto, bytes);
-  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.random() * 256;
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const value = hex(bytes);
-  return [
-    value.slice(0, 8),
-    value.slice(8, 12),
-    value.slice(12, 16),
-    value.slice(16, 20),
-    value.slice(20),
-  ].join("-");
 }

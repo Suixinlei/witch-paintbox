@@ -1,4 +1,3 @@
-let fieldId = 0;
 export function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   value?: string,
@@ -24,14 +23,6 @@ export function button(
     });
   };
   return node;
-}
-export function textarea(parent: HTMLElement, label: string, value: string) {
-  const wrapper = el("label", label, parent);
-  const input = el("textarea", undefined, parent);
-  input.id = `field-${++fieldId}`;
-  wrapper.htmlFor = input.id;
-  input.value = value;
-  return input;
 }
 export function detail(parent: HTMLElement, title: string, value: unknown) {
   const node = el("details", undefined, parent);

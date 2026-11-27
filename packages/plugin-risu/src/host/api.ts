@@ -3,27 +3,15 @@ import type {
   Character,
   Chat,
   ImageRequest,
-  LoreEntry,
-  ModelMessage,
-  ModelMode,
   OutputEvent,
-  Usage,
 } from "../domain/types";
 
-export type ModelResponse =
-  | { type: "success"; result: string }
-  | { type: "streaming"; result: ReadableStream<Record<string, string>> }
-  | { type: "fail"; result: string };
 export interface NativeFetchOptions extends RequestInit {
   networkRoute?: string;
   logFetch?: boolean;
   requestTimeoutMs?: number;
 }
 export interface RisuApi {
-  pluginStorage: {
-    getItem<T>(key: string): Promise<T | null>;
-    setItem(key: string, value: unknown): Promise<void>;
-  };
   readServerFile(name: string): Promise<string | null>;
   writeServerFile(name: string, value: string): Promise<void>;
   getCurrentCharacterIndex(): Promise<number>;
@@ -33,37 +21,8 @@ export interface RisuApi {
     characterIndex: number,
     chatIndex: number,
   ): Promise<Chat | null>;
-  addRisuReplacer(
-    type: "beforeRequest",
-    handler: RequestReplacer,
-  ): Promise<void>;
-  removeRisuReplacer(
-    type: "beforeRequest",
-    handler: RequestReplacer,
-  ): Promise<void>;
-  getCurrentLorebookEntries(): Promise<LoreEntry[]>;
-  parseRisuChat(value: string, options: { runVar: boolean }): Promise<string>;
-  getModelRequestBudget(): Promise<{ maxResponse: number }>;
-  runLLMModel(options: {
-    mode: ModelMode;
-    messages: ModelMessage[];
-    includeUsage?: boolean;
-  }): Promise<ModelResponse | { response: ModelResponse; usage: Usage | null }>;
   nativeFetch(url: string, options?: NativeFetchOptions): Promise<Response>;
   saveAsset(bytes: Uint8Array): Promise<string>;
-  generateNovelAIImage?(options: {
-    characterId: string;
-    prompt: string;
-    negative: string;
-    characters?: { positive: string; negative: string }[];
-    size?: string;
-    parameters?: {
-      steps: number;
-      sampler: string;
-      scale: number;
-      cfg_rescale: number;
-    };
-  }): Promise<string | null>;
   appendMessageImages(options: {
     characterId: string;
     chatId: string;
@@ -130,15 +89,6 @@ export interface RisuApi {
   hideContainer(): Promise<void>;
   alert(message: string): Promise<void>;
 }
-export interface RequestMessage {
-  role: string;
-  content: string;
-  [key: string]: unknown;
-}
-export type RequestReplacer = (
-  messages: RequestMessage[],
-  model: string,
-) => Promise<RequestMessage[]>;
 declare global {
   const risuai: RisuApi;
 }

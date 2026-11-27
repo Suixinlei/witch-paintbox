@@ -4,20 +4,43 @@ import type { Paintbox, PaintboxConnection, Portrait } from "./paintbox";
 
 type PortraitHost = Pick<RisuApi, "getCurrentCharacterIndex" | "getCharacter">;
 
-/** The card shows its status panel on the newest message only; the same gate keeps the copies out of history. */
+/** The card shows its panels on the newest message only; the same gate keeps the block out of history. */
 const newestOnly =
   "{{#if {{greater_equal::{{chat_index}}::{{? {{lastmessageid}}}}}}}}";
-const statusBlock =
-  /<statusData>\s*c\s*\|(?:(?!<\/statusData>)[\s\S])*?\|?\s*varId\s*:\s*([a-zA-Z0-9_-]+)/g;
 const refreshedFor = 10_000;
 const retryAfter = 30_000;
 const loadTimeout = 2500;
+/** What a status `varId` can look like, and so the only names worth a selector of their own. */
+const slotName = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Portrait slots. Any element inside the chat text that names a character with `data-char` gets that
+ * character's picture as an overlay; `data-wp` picks the shape. Without `data-wp` the picture covers
+ * the element from the top, which is what a status panel's portrait does.
+ * - `face`: round crop.
+ * - `standing`: whole-body picture; the slot keeps the height of the card's own `<img>`, which is
+ *   given the picture's ratio while it has no image of its own.
+ * - `zoom`: one large centred picture, using the original when the service has one.
+ * Every colour comes from a layer that is invalid until `--wp-portrait` exists, so a slot whose
+ * character has no picture in the library keeps showing whatever the card put there.
+ */
+const slots = [
+  "[data-char]{position:relative}",
+  '[data-char]::before{content:"";position:absolute;inset:0;z-index:3;pointer-events:none;background-image:var(--wp-portrait);background-size:cover;background-position:center top;background-repeat:no-repeat}',
+  ".portrait[data-char]::before{border-radius:7px}",
+  '[data-wp="face"]::before{border-radius:50%}',
+  '[data-wp="standing"]>img{aspect-ratio:auto var(--wp-ratio)}',
+  '[data-wp="standing"]::after{z-index:4}',
+  '[data-wp="zoom"]{position:fixed}',
+  // The first layer paints on top: the picture covers the frame but for its 1px ring.
+  '[data-wp="zoom"]::before{inset:auto;left:50%;top:50%;transform:translate(-50%,-50%);width:min(96vw,calc(92vh * var(--wp-ratio,0.684)));height:auto;aspect-ratio:var(--wp-ratio,0.684);padding:1px;background-image:var(--wp-portrait-full,var(--wp-portrait)),linear-gradient(rgba(201,162,39,.55),rgba(201,162,39,.55));background-origin:content-box,padding-box;background-clip:content-box,padding-box;background-position:center}',
+].join("\n");
 
 interface Portraits {
   cardId: string;
   revision: string | null;
-  /** Lowercase id, alias or short name to a data URL. */
-  images: Map<string, string>;
+  /** The finished style block for this card. */
+  css: string;
   checkedAt: number;
 }
 
@@ -34,28 +57,36 @@ function shortNames(name: string) {
   );
 }
 
-/** An exact id outranks a name or alias that happens to equal another character's id. */
-function index(portraits: Portrait[]) {
-  const images = new Map<string, string>();
+/** One rule per portrait, naming every key the status panel may use for the character. */
+function declarations(portraits: Portrait[], origin: string) {
+  const taken = new Set<string>();
+  const names = new Map<Portrait, string[]>();
+  // An exact id outranks a name or alias that happens to equal another character's id.
   for (const idsOnly of [true, false])
-    for (const portrait of portraits)
-      for (const key of idsOnly
+    for (const portrait of portraits) {
+      const list = names.get(portrait) ?? [];
+      for (const name of idsOnly
         ? [portrait.id]
         : [...portrait.aliases, ...shortNames(portrait.name)]) {
-        const lower = key.toLowerCase();
-        if (lower && !images.has(lower)) images.set(lower, portrait.image);
+        const lower = name.toLowerCase();
+        if (slotName.test(name) && !taken.has(lower)) {
+          taken.add(lower);
+          list.push(name);
+        }
       }
-  return images;
-}
-
-/** Covers the panel's portrait slot, above whatever asset the card ships. */
-function rule(id: string, image: string) {
-  return (
-    `.portrait[data-char="${id}" i]::after,.portrait[data-char^="${id} " i]::after{` +
-    'content:"";position:absolute;inset:0;z-index:3;border-radius:7px;' +
-    `background-color:#241d33;background-image:url("${image}");` +
-    "background-position:center top;background-size:cover;background-repeat:no-repeat}"
-  );
+      names.set(portrait, list);
+    }
+  const url = (path: string) => `url("${origin}${path}")`;
+  return portraits.flatMap((portrait) => {
+    const list = names.get(portrait) ?? [];
+    if (!list.length) return [];
+    const original = portrait.full
+      ? `;--wp-portrait-full:${url(portrait.full)}`
+      : "";
+    return [
+      `${list.map((name) => `[data-char="${name}" i]`).join(",")}{--wp-portrait:${url(portrait.thumb)}${original};--wp-ratio:${portrait.ratio.toFixed(6)}}`,
+    ];
+  });
 }
 
 export function createStatusPortraits(deps: {
@@ -93,7 +124,15 @@ export function createStatusPortraits(deps: {
     if (loading) return loading;
     loading = (async () => {
       await settle(ready, loadTimeout, undefined);
-      if (runtime.disposed || !connection()) {
+      const link = connection();
+      if (runtime.disposed || !link) {
+        portraits = undefined;
+        return undefined;
+      }
+      let origin: string;
+      try {
+        origin = new URL(link.url).origin;
+      } catch {
         portraits = undefined;
         return undefined;
       }
@@ -118,14 +157,16 @@ export function createStatusPortraits(deps: {
       const task = paintbox
         .portraits(cardId, previous?.revision || undefined)
         .then((result) => {
-          portraits = result.unchanged
-            ? previous
-            : {
-                cardId,
-                revision: result.revision,
-                images: index(result.portraits),
-                checkedAt: 0,
-              };
+          if (result.unchanged) portraits = previous;
+          else
+            portraits = {
+              cardId,
+              revision: result.revision,
+              css: [...declarations(result.portraits, origin), slots].join(
+                "\n",
+              ),
+              checkedAt: 0,
+            };
           portraits!.checkedAt = Date.now();
           return portraits;
         })
@@ -152,26 +193,13 @@ export function createStatusPortraits(deps: {
     return loading;
   }
 
+  /** Risu runs this on every message before its own scripts; the appended block only survives on the newest one. */
   async function onDisplay(content: string): Promise<string | undefined> {
-    if (
-      runtime.disposed ||
-      typeof content !== "string" ||
-      !content.includes("<statusData>")
-    )
+    if (runtime.disposed || typeof content !== "string" || !content)
       return undefined;
-    const ids = new Set(
-      Array.from(content.matchAll(statusBlock), (match) => match[1]),
-    );
-    if (!ids.size) return undefined;
     const loaded = await fresh();
     if (!loaded || runtime.disposed) return undefined;
-    const rules = Array.from(ids).flatMap((id) => {
-      const image = loaded.images.get(id.toLowerCase());
-      return image ? [rule(id, image)] : [];
-    });
-    return rules.length
-      ? `${content}\n\n${newestOnly}<style>\n${rules.join("\n")}\n</style>{{/}}`
-      : undefined;
+    return `${content}\n\n${newestOnly}<style>\n${loaded.css}\n</style>{{/}}`;
   }
 
   return { onDisplay };

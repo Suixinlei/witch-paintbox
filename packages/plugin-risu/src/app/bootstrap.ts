@@ -1,15 +1,10 @@
 import type { RisuApi } from "../host/api";
 import { createStorage } from "../shared/storage";
-import { createModel } from "../shared/model";
 import { createHostContext } from "../host/context";
 import { createRuntime } from "../shared/events";
-import { PREFIX, errorText } from "../shared/text";
-import { createLibraryRepository } from "../step1/libraryRepository";
-import { createExtractionService } from "../step1/service";
 import { createGenerationService } from "../step2/service";
 import { createUi } from "../ui/app";
 import { loadState } from "./state";
-import { createOutfitTest } from "../step1/outfitTest";
 import { createPaintbox, type PaintboxConnection } from "../step2/paintbox";
 import { createStatusPortraits } from "../step2/statusPortraits";
 
@@ -18,7 +13,7 @@ export async function bootstrap(api: RisuApi) {
   const storage = createStorage(api);
   // Risu renders the open chat as soon as the plugins are loaded, so the status
   // panel portraits are hooked before anything else is read or registered.
-  const loading = loadState(api, storage, runtime);
+  const loading = loadState(storage);
   const session: { connection: () => PaintboxConnection | undefined } = {
     connection: () => undefined,
   };
@@ -34,84 +29,32 @@ export async function bootstrap(api: RisuApi) {
     ),
   });
   await api.addRisuScriptHandler("display", statusPortraits.onDisplay);
-  const states = await loading.catch(async (error: unknown) => {
+  const state = await loading.catch(async (error: unknown) => {
     await api
       .removeRisuScriptHandler("display", statusPortraits.onDisplay)
       .catch(() => undefined);
     throw error;
   });
-  session.connection = () => states.generation.paintboxConnection;
-  const context = createHostContext(api);
-  const model = createModel(api, runtime);
-  const repository = createLibraryRepository(storage);
-  const extraction = createExtractionService({
-    api,
-    context,
-    model,
-    storage,
-    runtime,
-    repository,
-    state: states.extraction,
-  });
+  session.connection = () => state.paintboxConnection;
   const generation = createGenerationService({
     api,
-    context,
-    model,
+    context: createHostContext(api),
     storage,
     runtime,
-    library: {
-      load: async (source) => ({
-        ...(await repository.load(source)),
-        sharedOutfits:
-          (await storage.read<import("../domain/types").Outfit[]>(
-            "shared-outfits",
-          )) ?? [],
-      }),
-    },
-    state: states.generation,
+    state,
   });
-  const outfitTest = createOutfitTest({
-    api,
-    context,
-    storage,
-    runtime,
-  });
-  await outfitTest.loadSettings();
-  const ui = createUi(
-    {
-      extraction,
-      outfitTest,
-      generation,
-      runtime,
-      image: (jobId, index, legacy) =>
-        legacy
-          ? api.pluginStorage.getItem<string>(
-              PREFIX + "image:" + jobId + ":" + index,
-            )
-          : generation.historyImage(jobId, index),
-    },
-    () => api.hideContainer(),
-  );
+  const ui = createUi({ generation, runtime }, () => api.hideContainer());
   const unsubscribe = runtime.subscribe(ui.render);
   const registrations: { id: string }[] = [];
-  const legacy = states.generation.settings.execution === "legacy";
-  async function show(view: "library" | "automatic" | "connection") {
+  async function show(view: "automatic" | "connection") {
     await api.showContainer("fullscreen");
-    try {
-      if (legacy) {
-        await extraction.loadScope();
-        runtime.status = "本地资料已载入";
-      }
-    } catch (error) {
-      runtime.status = errorText(error);
-    }
     await ui.open(view);
   }
   try {
     registrations.push(
       await api.registerSetting(
-        legacy ? "魔女画匣 · 两步流程" : "魔女画匣 · 服务连接",
-        () => show(legacy ? "automatic" : "connection"),
+        "魔女画匣 · 服务连接",
+        () => show("connection"),
         "🎨",
         "html",
       ),
@@ -119,12 +62,12 @@ export async function bootstrap(api: RisuApi) {
     registrations.push(
       await api.registerButton(
         {
-          name: legacy ? "人物背景与自动生图" : "配图",
+          name: "配图",
           icon: "🎨",
           iconType: "html",
           location: "action",
         },
-        () => show(legacy ? "library" : "automatic"),
+        () => show("automatic"),
       ),
     );
     await api.addRisuChatListener("output", generation.onAssistantOutput);
@@ -140,9 +83,8 @@ export async function bootstrap(api: RisuApi) {
       await api.removeRisuChatListener("output", generation.onAssistantOutput);
       await api.removeRisuScriptHandler("display", statusPortraits.onDisplay);
       for (const item of registrations) await api.unregisterUIPart(item.id);
-      await states.generation.enqueueWrites.catch(() => {});
-      await states.generation.autoWrites.catch(() => {});
-      await states.generation.writes.catch(() => {});
+      await state.enqueueWrites.catch(() => {});
+      await state.autoWrites.catch(() => {});
     });
     ui.render();
     await generation.recover();

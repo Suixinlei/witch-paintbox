@@ -32,6 +32,9 @@ export function createAttachments(deps: {
           !item.supersededBy &&
           item.illustration,
       );
+    // A batch drawn without a click has no placeholder to show: the old pictures
+    // stay until the new set is attached, exactly like a single regenerated one.
+    if (replaceAll && !jobs.length) return;
     const result = await api.appendMessageImages({
       characterId: job.source.characterId,
       chatId: job.source.chatId,
@@ -114,7 +117,7 @@ export function createAttachments(deps: {
 
   async function attachAutomaticImages(
     job: GenerationJob,
-    returnedBytes?: Bytes | ReadonlyMap<string, Bytes>,
+    returnedBytes?: Bytes,
   ) {
     if (
       runtime.disposed ||
@@ -143,15 +146,10 @@ export function createAttachments(deps: {
       if (!job.pair || !job.source?.characterId || !job.source?.chatId)
         throw new Error("任务缺少原回复关联信息");
       const images = [];
-      for (const item of batch) {
-        const bytes =
-          returnedBytes instanceof Uint8Array
-            ? item === job
-              ? returnedBytes
-              : undefined
-            : returnedBytes?.get(item.id);
-        images.push(...(await saveImages(item, bytes)));
-      }
+      for (const item of batch)
+        images.push(
+          ...(await saveImages(item, item === job ? returnedBytes : undefined)),
+        );
       if (runtime.disposed) return;
       const replaceImageIds = new Set(images.map((image) => image.id));
       if (job.replacesImageId) replaceImageIds.add(job.replacesImageId);
@@ -204,6 +202,7 @@ export function createAttachments(deps: {
                 );
         } catch (e) {
           job.replacementCleanupError = errorText(e);
+          runtime.status = "被替换的旧图未能清理：" + errorText(e);
           await persistAutomaticJobs();
         }
       }

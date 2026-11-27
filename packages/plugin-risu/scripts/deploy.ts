@@ -1,10 +1,20 @@
-import { readFile, mkdir, copyFile, cp, writeFile } from "node:fs/promises";
+import {
+  readFile,
+  readdir,
+  unlink,
+  mkdir,
+  copyFile,
+  cp,
+  writeFile,
+} from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const target = path.resolve(process.argv[2] || path.join(root, "../../../risu"));
+const target = path.resolve(
+  process.argv[2] || path.join(root, "../../../risu"),
+);
 const app = JSON.parse(
   await readFile(path.join(target, "package.json"), "utf8"),
 ) as { name: string };
@@ -25,11 +35,23 @@ await copyFile(
   path.join(root, "dist/plugin.js.map"),
   path.join(destination, "plugin.js.map"),
 );
-await cp(path.join(root, "examples"), destination, { recursive: true });
-await cp(path.join(root, "docs"), destination, { recursive: true });
-await cp(path.join(root, "workflows"), path.join(destination, "workflows"), {
+// The docs lie flat next to plugin.js and are mirrored, so a doc removed here also
+// leaves the distribution. README.md is not theirs: distribution.md becomes it below.
+const docs = (await readdir(path.join(root, "docs"))).filter((name) =>
+  name.endsWith(".md"),
+);
+await cp(path.join(root, "docs"), destination, {
   recursive: true,
+  filter: (source) => path.basename(source) !== "README.md",
 });
+for (const entry of await readdir(destination, { withFileTypes: true })) {
+  if (
+    entry.isFile() &&
+    entry.name.endsWith(".md") &&
+    !docs.includes(entry.name)
+  )
+    await unlink(path.join(destination, entry.name));
+}
 await cp(path.join(root, "skills"), path.join(destination, "skills"), {
   recursive: true,
 });

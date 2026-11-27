@@ -6,7 +6,7 @@ const fakeToken = "fixture-consumer-token-0000";
 const line = "A red paper boat floats across a lake under a sunrise.";
 const reply = `${line}\r\n\r\n<think>\r\nHIDDEN\r\n</think>\r\n\r\nThe pines reflect in the water.`;
 const png = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7ywAAAAASUVORK5CYII=",
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5ywAAAAASUVORK5CYII=",
   "base64",
 );
 const contentType = "application/vnd.witch-paintbox.v1";
@@ -26,46 +26,43 @@ function packet(value: object, blobs: Buffer[] = []) {
 const snapshot = (page: Page) => page.evaluate(() => window.harness.snapshot());
 const jobs = async (page: Page): Promise<GenerationJob[]> =>
   JSON.parse((await snapshot(page)).files["automatic-jobs"] ?? "[]");
+/** Request bodies the plugin sent to one service endpoint. */
+const requests = async (page: Page, path: string) =>
+  (await snapshot(page)).calls
+    .filter(
+      (call) =>
+        call.kind === "paintbox" &&
+        (call.payload as { path: string }).path === path,
+    )
+    .map(
+      (call) =>
+        (call.payload as { body: Record<string, unknown> }).body as {
+          original?: string;
+          risu?: { cardId: string; automatic: boolean };
+          input?: { scene?: string };
+        },
+    );
 
-async function installFixture(page: Page) {
-  await page.goto("/e2e/fixture/");
-  await expect(
-    page.getByRole("heading", { name: "魔女画匣 · 两步流程" }),
-  ).toBeVisible();
-  await page.evaluate(() =>
-    window.harness.configure({
-      execution: "paintbox",
-      enabled: false,
-    }),
-  );
-  await page.reload();
-  await page.getByLabel("Risu 专用服务令牌").fill(fakeToken);
-  await page.getByRole("button", { name: "测试并保存服务连接" }).click();
-  await expect(
-    page.getByText("已连接魔女画匣独立服务", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByRole("navigation").getByRole("button")).toHaveText([
-    "服务连接",
-    "配图",
-    "生图回顾",
-  ]);
-  await expect(page.getByLabel("助手回复完成后自动配图")).toHaveCount(0);
-}
-
-test("Risu automatically draws every planned image once and attaches them after the reply", async ({
-  page,
-}) => {
+async function mockService(page: Page) {
   await page.route("**/e2e-paintbox/v1/**", async (route) => {
     const endpoint = new URL(route.request().url()).pathname.split("/").at(-1);
     if (endpoint === "health")
       return route.fulfill({ json: { version: 3, revision: "configured" } });
     if (endpoint === "preferences")
       return route.fulfill({ json: { enabled: true } });
+    // A whole-reply batch attaches every picture at once, so earlier ones are read back.
+    if (endpoint === "image") {
+      const { id } = route.request().postDataJSON();
+      return route.fulfill({
+        contentType,
+        body: packet({ entries: [{ id }] }, [png]),
+      });
+    }
     const body = route.request().postDataJSON();
     if (endpoint === "plan") {
       expect(body.original).not.toContain("HIDDEN");
+      expect(body.risu.cardId).toBe("char-A");
       expect(body.maxImages).toBeUndefined();
-      expect(body.risu).toEqual({ cardId: "char-A", automatic: true });
       expect(body.draw).toBeUndefined();
       return route.fulfill({
         contentType,
@@ -96,18 +93,36 @@ test("Risu automatically draws every planned image once and attaches them after 
       body: packet({ history: { id: body.history.id } }, [png]),
     });
   });
+}
+
+async function installFixture(page: Page) {
+  await page.goto("/e2e/fixture/");
+  await page.getByLabel("Risu 专用服务令牌").fill(fakeToken);
+  await page.getByRole("button", { name: "测试并保存服务连接" }).click();
+  await expect(
+    page.getByText("已连接魔女画匣独立服务", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("navigation").getByRole("button")).toHaveText([
+    "服务连接",
+    "配图",
+  ]);
+}
+
+const attached = (page: Page) =>
+  jobs(page).then((list) =>
+    list.filter((job) => job.attachmentState === "attached"),
+  );
+
+test("Risu automatically draws every planned image once and attaches them after the reply", async ({
+  page,
+}) => {
+  await mockService(page);
   await installFixture(page);
   await page.evaluate((text) => {
     window.harness.emitRaw(text);
     window.harness.emitRaw(text);
   }, reply);
-  await expect
-    .poll(
-      async () =>
-        (await jobs(page)).filter((job) => job.attachmentState === "attached")
-          .length,
-    )
-    .toBe(2);
+  await expect.poll(async () => (await attached(page)).length).toBe(2);
   const [original, second] = await jobs(page);
   expect(original).toMatchObject({
     awaitingClick: false,
@@ -143,18 +158,113 @@ test("Risu automatically draws every planned image once and attaches them after 
   await page.evaluate((text) => window.harness.emitRaw(text), reply);
   await expect.poll(async () => (await jobs(page)).length).toBe(2);
   const finished = await snapshot(page);
-  const requests = finished.calls
-    .filter(({ kind }) => kind === "paintbox")
-    .map(({ payload }) => payload as { path: string });
+  const plans = await requests(page, "/v1/plan");
+  expect(plans).toHaveLength(1);
+  expect(plans[0].risu).toEqual({ cardId: "char-A", automatic: true });
+  expect(await requests(page, "/v1/images")).toHaveLength(2);
+  expect(finished.calls.filter(({ kind }) => kind === "fetch")).toEqual([]);
+});
+
+test("regenerating one picture reuses its saved prompt and replaces only that picture", async ({
+  page,
+}) => {
+  await mockService(page);
+  await installFixture(page);
+  await page.evaluate((text) => window.harness.emitRaw(text), reply);
+  await expect.poll(async () => (await attached(page)).length).toBe(2);
+  const [boat, pines] = await jobs(page);
+  const result = await page.evaluate(
+    (imageId) => window.harness.request("regenerate", true, imageId),
+    boat.id + ":0",
+  );
+  expect(result).toMatchObject({ accepted: true });
+  await expect
+    .poll(
+      async () =>
+        (await jobs(page)).find((job) => job.id === result?.jobId)
+          ?.attachmentState,
+    )
+    .toBe("attached");
+  const after = await jobs(page);
+  const replacement = after.find((job) => job.id === result?.jobId);
+  expect(replacement).toMatchObject({
+    state: "complete",
+    manual: true,
+    retryOf: boat.id,
+    replacesImageId: boat.id + ":0",
+  });
+  expect(after.find((job) => job.id === boat.id)?.supersededBy).toBe(
+    replacement?.id,
+  );
   expect(
-    requests.filter((request) => request.path === "/v1/plan"),
-  ).toHaveLength(1);
+    after.find((job) => job.id === pines.id)?.supersededBy,
+  ).toBeUndefined();
+  // Only the chosen picture is drawn again, from the prompt saved with it.
+  expect(await requests(page, "/v1/plan")).toHaveLength(1);
+  const draws = await requests(page, "/v1/images");
+  expect(draws).toHaveLength(3);
+  expect(draws[2].input?.scene).toBe("red paper boat, lake");
+  expect((await snapshot(page)).attachments.at(-1)).toMatchObject({
+    replaceImageIds: expect.arrayContaining([
+      replacement!.id + ":0",
+      boat.id + ":0",
+    ]),
+  });
+});
+
+test("filling the latest reply reuses its finished pictures", async ({
+  page,
+}) => {
+  await mockService(page);
+  await installFixture(page);
+  await page.evaluate((text) => window.harness.emitRaw(text), reply);
+  await expect.poll(async () => (await attached(page)).length).toBe(2);
+  await page.getByRole("button", { name: "配图", exact: true }).click();
+  await page
+    .getByRole("button", { name: "为最新已完成回复自动配图（去重）" })
+    .click();
+  await expect(page.getByRole("status")).toHaveText("已确认最新回复的配图任务");
+  expect(await jobs(page)).toHaveLength(2);
+  expect(await requests(page, "/v1/plan")).toHaveLength(1);
+  expect(await requests(page, "/v1/images")).toHaveLength(2);
+});
+
+test("replanning a reply draws a new set and replaces the old pictures in one step", async ({
+  page,
+}) => {
+  await mockService(page);
+  await installFixture(page);
+  await page.evaluate((text) => window.harness.emitRaw(text), reply);
+  await expect.poll(async () => (await attached(page)).length).toBe(2);
+  const result = await page.evaluate(() =>
+    window.harness.request("replace", true),
+  );
+  expect(result).toMatchObject({ accepted: true });
+  await expect
+    .poll(
+      async () =>
+        (await jobs(page)).filter(
+          (job) => job.replaceReplyImages && job.attachmentState === "attached",
+        ).length,
+    )
+    .toBe(2);
+  const after = await jobs(page);
+  expect(after.filter((job) => job.supersededBy)).toHaveLength(2);
+  expect(after.filter((job) => !job.supersededBy)).toHaveLength(2);
+  const final = await snapshot(page);
+  expect(final.attachments.at(-1)).toMatchObject({
+    replaceAll: true,
+  });
+  // The old pictures stay until the new set lands: nothing is ever replaced by an empty list.
   expect(
-    requests.filter((request) => request.path === "/v1/images"),
-  ).toHaveLength(2);
-  expect(
-    finished.calls.filter(({ kind }) => ["model", "novelai"].includes(kind)),
-  ).toEqual([]);
+    final.attachments.every(
+      (item) => (item as { images: unknown[] }).images.length > 0,
+    ),
+  ).toBe(true);
+  const plans = await requests(page, "/v1/plan");
+  expect(plans).toHaveLength(2);
+  expect(plans[1].risu).toEqual({ cardId: "char-A", automatic: false });
+  expect(await requests(page, "/v1/images")).toHaveLength(4);
 });
 
 test("real Paintbox planning, NovelAI PNG and Risu attachment", async ({

@@ -1,5 +1,11 @@
 import type { RisuApi } from "./api";
-import type { OutputEvent, Character, Chat, Source } from "../domain/types";
+import type {
+  OutputEvent,
+  Character,
+  Chat,
+  Source,
+  Pair,
+} from "../domain/types";
 import { text, clean } from "../shared/text";
 export function sourceFor(
   char: Character,
@@ -18,15 +24,39 @@ export function sourceFor(
     chatIndex,
   };
 }
+export function latestTurn(chat: Chat, messageIndex: number): Pair {
+  if (!Number.isInteger(messageIndex) || messageIndex < 0)
+    throw Error("助手回复索引无效");
+  const assistant = chat.message[messageIndex];
+  if (
+    !assistant ||
+    assistant.role !== "char" ||
+    assistant.disabled ||
+    assistant.isComment ||
+    !text(clean(assistant.data))
+  )
+    throw Error("没有可用的助手回复");
+  const user = chat.message
+    .slice(0, messageIndex)
+    .findLast(
+      (message) =>
+        message.role === "user" && !message.disabled && !message.isComment,
+    );
+  if (!user || !text(clean(user.data)))
+    throw Error("助手回复之前没有可用的用户消息");
+  return {
+    userMessage: clean(user.data),
+    assistantMessage: clean(assistant.data),
+    rawAssistantMessage: assistant.data,
+  };
+}
 export function createHostContext(
   api: Pick<
     RisuApi,
     | "getCurrentCharacterIndex"
     | "getCurrentChatIndex"
     | "getCharacter"
-    | "parseRisuChat"
     | "getChatFromIndex"
-    | "getCurrentLorebookEntries"
   >,
 ) {
   async function activeContext(event?: OutputEvent) {
@@ -51,26 +81,6 @@ export function createHostContext(
       source: sourceFor(char, chat, characterIndex, chatIndex),
     };
   }
-  async function capturePlanningContext(source: Source) {
-    async function assertScope() {
-      const current = await activeContext();
-      if (
-        current.source.characterId !== source.characterId ||
-        current.source.chatId !== source.chatId
-      )
-        throw Error("读取配图资料时聊天已切换，请在目标聊天重新操作");
-    }
-    await assertScope();
-    const name = await api.parseRisuChat("{{user}}", { runVar: false });
-    const persona = await api.parseRisuChat("{{userpersona}}", {
-      runVar: false,
-    });
-    const loreEntries = await api.getCurrentLorebookEntries();
-    await assertScope();
-    if (!text(name) || name === "{{user}}" || persona === "{{userpersona}}")
-      throw Error("无法读取当前聊天的用户身份，未调用生图模型");
-    return { userIdentity: { name, persona }, loreEntries };
-  }
   async function rawReply(
     source: Source,
     index: number,
@@ -82,7 +92,7 @@ export function createHostContext(
       source.chatIndex,
     );
     if (!chat || chat.id !== source.chatId)
-      throw Error("原聊天已变化，无法读取原始绘图块");
+      throw Error("原聊天已变化，无法读取原始回复");
     const message = messageId
       ? chat.message.find((entry) => entry.chatId === messageId)
       : chat.message[index];
@@ -94,6 +104,6 @@ export function createHostContext(
       throw Error("原回复已变化，请从原消息重新补图");
     return message.data;
   }
-  return { activeContext, capturePlanningContext, rawReply };
+  return { activeContext, rawReply };
 }
 export type HostContext = ReturnType<typeof createHostContext>;
