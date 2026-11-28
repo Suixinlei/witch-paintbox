@@ -1,6 +1,6 @@
 ---
 name: witch-paintbox-operations
-description: Use when implementing changes to the Witch Paintbox service or its management UI, and for deployment, restart, verification, or plugin release in this repo. Apply and verify service changes on the local WSL2 instance before handing back. Also covers GitHub releases of 四方世界 and local Risu plugin updates.
+description: Use when implementing changes to the Witch Paintbox service or its management UI, and for deployment, restart, verification, or plugin release in this repo. Apply and verify service changes on the local WSL2 instance before handing back. Also covers GitHub releases of 四方世界 and local Risu plugin updates, local Risu config writes, and frontend deployments.
 ---
 
 # 魔女画匣三端运维
@@ -33,6 +33,12 @@ node .agents/skills/witch-paintbox-operations/scripts/update-server.mjs -Apply
 3. 用户授权发布后，执行 `git push origin HEAD:refs/heads/sifang-standalone-service`。只做快进。用 `git ls-remote origin refs/heads/sifang-standalone-service` 核对 SHA，再回报版本、分支和提交。用户自行在四方点「检查更新」并安装。
 
 ## Risu
+
+**关页确认放在最终写入前。** 插件安装、存档配置写入或前端产物切换需要关页时，先完成代码与补丁、测试、类型检查、构建、只读预演及回滚准备，确认已可直接执行最终写入，再检查页面状态或请用户关页。不要为了并行准备工作提前让用户关闭页面。
+
+用户确认关页后，立即进入写入窗口：只做重读最新存档、并发校验与最终备份、实际写入或产物切换、必要的重启及结果验收；不再开始开发、构建、广泛测试或其他独立任务。若发现需要回头修改或重建，停止写入并告诉用户可先恢复使用；准备完成后再进入最终写入窗口。已有确认且页面状态未变化时不重复询问。验收完成后立即告知可重新打开页面，不让用户等待后续独立工作。
+
+存档补丁必须基于最终写入时的最新数据生成或核对哈希；准备期间用户继续聊天，不得拿旧快照覆盖新消息。
 
 用户指定 IAB 页面用于调试时，可自行操作该调试页，更新前关闭、更新后重开并实机验收，无须每次再询问关页授权。此授权不扩展到用户在 Edge 等其他浏览器使用的页面。
 

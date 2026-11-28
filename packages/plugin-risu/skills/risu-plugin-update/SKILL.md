@@ -11,6 +11,8 @@ description: 备份并更新本地 Node 自托管 Risu 中已安装的 global-co
 
 源码工程是 `/mnt/d/Projects/witch-paintbox/packages/plugin-risu`；`/mnt/d/Projects/risu/plugins/global-comfy-image` 是分发目录。此 skill 与脚本随分发文件一起复制。源码修改仍遵守工程 AGENTS.md，先完成 check、lint 和 E2E，再更新真实实例。`pnpm deploy` 只复制分发文件，不安装到存档。
 
+**最后才确认关页。** 代码、测试、类型检查、构建、分发文件、只读安装预览和回滚准备全部完成，确认可直接安装后，再执行页面检查或请用户关页。确认关闭后只做最新存档读取、并发校验与最终备份、安装和结果校验，不再开发、构建或开始其他任务。需要返工时先停止安装并告知用户可恢复使用，准备完成后再进入最终写入窗口；页面状态未变化时沿用已有确认。安装验收完成后立即告知可重新打开页面。
+
 ## 执行
 
 默认在 WSL2 Bash 中使用 Linux 原生 Node.js 22.12+，在源码或分发插件目录中运行（脚本会定位相邻的本地 Risu，也可传 `--risu-root`）：
