@@ -26,12 +26,17 @@ const EXTENSIONS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'web
 // 取景串。front 与管理台「角色图」功能（anchor-config.ts generatePortrait）一致，改那边时同步这里。
 const FRONT = '1.6::full body::, 1.5::standing::, 1.4::straight-on::, looking at viewer, wide shot, simple background, feet visible';
 const SIDE = '1.6::full body::, 1.5::standing::, 1.4::from side::, 1.2::profile::, straight-on, simple background, feet visible';
-const GENITALS = '1.6::pussy::, genitalia, 1.4::close-up::, lower body, 1.2::spread legs::, simple background';
+// 下体图的取景：照搬 2026-11-27 四方世界「raikou-spread / kaltsit-spread」那两张用户过了的写法——仰卧举腿张开、正面朝向，
+// 负面压 from below / from side / from behind / standing / 荷兰角 / 透视缩短，画幅也用当时的 832x1216。
+// 之前两版都不行：原版（close-up + lower body + spread legs）画成从两腿之间往上仰拍，看不到下体；加 straight-on 后变成脸部特写。
+const GENITALS = '1.3::pussy::, 1.3::spread pussy::, lying on back, legs up, spread legs, simple background';
+const GENITALS_EXTRA = 'pussy focus, facing viewer';
+const GENITALS_NEGATIVE = 'multiple girls, 2girls, multiple boys, 2boys, extra characters, 1.2::dutch angle::, 1.2::foreshortening::, standing, from side, from behind, 1.2::from below::';
 const ANGLES = 'from side, from behind, from above, high angle view, low angle view, looking down at viewer, fisheye, wide-angle lens, foreshortening, dynamic angle, dutch angle, leaning forward, close-up, upper body, cowboy shot, cropped legs, out of frame';
 const SHOTS = {
   front: { view: '裸体正面', size: '832x1216', framing: FRONT, negative: [ANGLES], nude: true },
   side: { view: '裸体侧面', size: '832x1216', framing: SIDE, negative: [ANGLES.split(', ').filter(tag => tag !== 'from side').join(', ')], nude: true },
-  genitals: { view: '下体', size: '1024x1024', framing: GENITALS, negative: ['underwear, clothes, 1boy, male, penis, monochrome'], nude: true, womenOnly: true },
+  genitals: { view: '下体', size: '832x1216', framing: GENITALS, extra: GENITALS_EXTRA, negative: ['underwear, clothes, 1boy, male, penis, monochrome', GENITALS_NEGATIVE], nude: true, womenOnly: true },
   outfit: { view: '服装人设图', size: '832x1216', framing: FRONT, negative: [ANGLES] },
 };
 const KINDS = { nude: ['front', 'side'], front: ['front'], side: ['side'], genitals: ['genitals'], outfit: ['outfit'] };
@@ -92,11 +97,12 @@ if (!artist) fail(`卡绑定的画师预设已不存在：${presetId}`);
 
 const anchorOutfit = selected => (selected ? anchor.outfits.find(item => [item.id, item.name].includes(selected)) : undefined);
 const plans = KINDS[kind].map(shot => {
-  const { view, size, framing, negative, nude, womenOnly } = SHOTS[shot];
+  const { view, size, framing, extra, negative, nude, womenOnly } = SHOTS[shot];
   if (womenOnly && !/\b1girl\b/.test(anchor.appearance)) fail(`${anchor.name} 不是女性角色，不出下体图`);
   const chosen = shot === 'outfit' ? anchorOutfit(outfit === undefined ? anchor.selectedOutfitId : outfit) : undefined;
   if (shot === 'outfit' && outfit && !chosen) fail(`人物 ${anchor.name} 没有服装：${outfit}`);
-  const positive = ['solo', framing, artist.positive, ...(nude ? ['completely nude, nude'] : []), anchor.appearance, chosen?.tags ?? '']
+  // extra 接在人物外貌和服装之后（下体图的 pussy focus, facing viewer 要放在这个位置才管用）。
+  const positive = ['solo', framing, artist.positive, ...(nude ? ['completely nude, nude'] : []), anchor.appearance, chosen?.tags ?? '', extra ?? '']
     .map(part => part?.trim()).filter(Boolean).join(', ');
   return {
     shot, view, size, positive, character: anchor.name, preset: artist.name, framing,

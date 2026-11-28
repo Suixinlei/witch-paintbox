@@ -36,7 +36,7 @@ node .agents/skills/witch-paintbox-portrait/scripts/portrait.mjs <chaId> <人物
 人物定稿一般是这几张，顺序为裸体 → 下体 → 穿衣：
 
 - **裸体全身**：正视图加侧视图各一张，832×1216。男性角色同样出。
-- **下体图**：只给成年女性角色，1024×1024；男性不用。脚本遇到外貌里没有 `1girl` 的人物会拒绝。
+- **下体图**：只给成年女性角色，832×1216，仰卧举腿张开、正面朝向；男性不用。脚本遇到外貌里没有 `1girl` 的人物会拒绝。
 - **服装人设图**：穿默认或指定服装的正面全身，832×1216，这张才是存回画匣、显示在状态栏的图。
 
 只重画用户点名的那张（用 `front` / `side` / `genitals` / `outfit`），不要整套重出。
@@ -47,6 +47,7 @@ node .agents/skills/witch-paintbox-portrait/scripts/portrait.mjs <chaId> <人物
 
 - 正面：`solo` + 固定取景串 + 卡绑定预设的 positive + 人物 `appearance` + 服装 tags。
 - 侧面：把取景里的正面朝向换成 `from side`、`profile`，并从固定负面串里去掉 `from side`。
+- 下体：固定取景串是 `1.3::pussy::, 1.3::spread pussy::, lying on back, legs up, spread legs, simple background`，人物外貌之后接 `pussy focus, facing viewer`，负面另压 `1.2::dutch angle::`、`1.2::foreshortening::`、`standing, from side, from behind, 1.2::from below::`。这组是照 2026-11-27 四方世界「raikou-spread」那张用户过了的写法搬来的（服务端图片历史里查得到）；原版只写 `close-up, lower body, spread legs` 会画成从两腿之间往上仰拍，加 `straight-on` 又会变成脸部特写，别改回去。
 - 裸体各张加 `completely nude, nude`，负面加 `underwear, clothes`——不挂服装时模型会自己补内裤，所以要显式压掉。
 - 负面：卡绑定预设的 negative + 固定的角度/半身负面串 + 人物 `negative`。
 
