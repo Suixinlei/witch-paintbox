@@ -67,7 +67,7 @@ export async function testSharedOutfitPicker(page, panel, screenshots) {
   assert.ok(saved.expanded.includes(travelTags)); assert.ok(saved.catalog.includes('default = {red coat}'));
   assert.equal(new Set(saved.outfits.map(item => item.id)).size, 3);
 
-  await panel.locator(`.anchor-character[data-anchor-id="${saved.id}"]`).click();
+  await panel.locator(`.anchor-character [data-anchor-id="${saved.id}"]`).click();
   await panel.locator('[data-anchor-action="toggle-shared-picker"]').click();
   assert.equal(await panel.locator(`[data-shared-outfit-pick="${fixture.travelId}"]`).isDisabled(), true);
   const travelDetails = panel.locator(`[data-outfit="${roleTravelId}"]`);
@@ -83,7 +83,7 @@ export async function testSharedOutfitPicker(page, panel, screenshots) {
   await page.waitForFunction(async () => (await (await import('/dist/anchor-store.js')).loadAnchors()).some(anchor => anchor.outfits.some(item => item.tags === 'personal travel clothes')));
   assert.equal(await page.evaluate(async id => (await import('/dist/shared-outfit-store.js')).loadSharedOutfits().find(item => item.id === id).tags, fixture.travelId), 'updated global clothes');
 
-  await panel.locator(`.anchor-character[data-anchor-id="${saved.id}"]`).click();
+  await panel.locator(`.anchor-character [data-anchor-id="${saved.id}"]`).click();
   await panel.locator('[data-anchor-action="toggle-shared-picker"]').click();
   await search.fill('备用00装'); await panel.locator('[data-shared-outfit-pick="backup-0"]').check();
   await page.evaluate(async () => { await (await import('/dist/shared-outfit-store.js')).deleteSharedOutfit('backup-0'); });

@@ -13,6 +13,8 @@ import { emitPetEvent, petEnd, petFault, petTaskId, withFault } from './pet-even
 const PORTRAIT_FRAMING = '1.6::full body::, 1.5::standing::, 1.4::straight-on::, looking at viewer, wide shot, simple background, feet visible';
 const PORTRAIT_NEGATIVE = 'from side, from behind, from above, high angle view, low angle view, looking down at viewer, fisheye, wide-angle lens, foreshortening, dynamic angle, dutch angle, leaning forward, close-up, upper body, cowboy shot, cropped legs, out of frame';
 const PORTRAIT_SIZE = '832x1216';
+/** Shorter lists are scanned by eye; the search box only appears once the library grows. */
+const LIBRARY_SEARCH_MIN = 8;
 function escape(value) {
     return value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 }
@@ -66,6 +68,7 @@ export class AnchorConfig {
     tab = 'round';
     fixedTab = false;
     anchors = [];
+    librarySearch = '';
     sharedOutfits = [];
     sharedOutfitsError = '';
     sharedDraft = null;
@@ -271,12 +274,16 @@ export class AnchorConfig {
         <span class="anchor-card-caption"><strong>${escape(item.summary)}</strong><span class="anchor-tag-excerpt">${escape(imageHistoryPositive(item.entry))}</span><span class="anchor-card-action">配置角色 →</span></span>
       </button>`).join('')}</div>`;
     }
-    libraryView() {
-        return `<div class="anchor-toolbar"><p class="config-status">固定外貌与服装分别保存；模型 API 的标签锚定条目会展示角色、别名与完整服装库。</p>
-      <button type="button" class="text-button" data-anchor-action="new">新建角色</button></div>
-      ${this.anchorsError ? `<p class="anchor-empty is-error" role="alert">${escape(this.anchorsError)}</p><button type="button" class="text-button" data-anchor-action="reload">重新读取</button>` : ''}
-      ${!this.anchors.length && !this.anchorsError ? `<p class="anchor-empty">还没有锚定角色。${isServiceEditor() ? '可使用“新建角色”添加。' : '可以从“本轮生图”挑一张图片，也可以直接新建。'}</p>` : ''}
-      <div class="anchor-library">${this.anchors.map(anchor => `<article class="anchor-record">
+    /** The search matches a character's name, any of its aliases or any outfit in its wardrobe. */
+    matchingAnchors() {
+        const query = this.librarySearch.trim().toLocaleLowerCase();
+        if (!query)
+            return this.anchors;
+        return this.anchors.filter(anchor => [anchor.name, ...anchor.aliases, ...anchor.outfits.map(outfit => outfit.name)]
+            .some(text => text.toLocaleLowerCase().includes(query)));
+    }
+    anchorRecord(anchor) {
+        return `<article class="anchor-record">
         <div class="anchor-character">
           ${this.image(anchor.portrait, 'anchor-portrait', true)}
           <button type="button" class="anchor-character-details" data-anchor-id="${escape(anchor.id)}">
@@ -287,7 +294,38 @@ export class AnchorConfig {
         <ul class="anchor-wardrobe">${anchor.outfits.map(outfit => `<li><button type="button" data-anchor-id="${escape(anchor.id)}" data-anchor-outfit="${escape(outfit.id)}"><span>${escape(outfit.name)}</span>${anchor.selectedOutfitId === outfit.id ? '<small>当前服装</small>' : ''}</button></li>`).join('')}
           <li><button type="button" class="anchor-add-outfit" data-anchor-id="${escape(anchor.id)}" data-anchor-outfit="new">＋ 添加服装</button></li>
         </ul>
-      </article>`).join('')}</div>`;
+      </article>`;
+    }
+    libraryView() {
+        return `<div class="anchor-toolbar"><p class="config-status">固定外貌与服装分别保存；模型 API 的标签锚定条目会展示角色、别名与完整服装库。</p>
+      <button type="button" class="text-button" data-anchor-action="new">新建角色</button></div>
+      ${this.anchors.length >= LIBRARY_SEARCH_MIN ? `<label class="anchor-search"><span>查找角色</span>
+        <input type="search" data-anchor-search value="${escape(this.librarySearch)}" placeholder="按角色名、别名或服装名筛选" autocomplete="off">
+        <small role="status" data-anchor-search-status>${this.searchStatus()}</small></label>` : ''}
+      ${this.anchorsError ? `<p class="anchor-empty is-error" role="alert">${escape(this.anchorsError)}</p><button type="button" class="text-button" data-anchor-action="reload">重新读取</button>` : ''}
+      ${!this.anchors.length && !this.anchorsError ? `<p class="anchor-empty">还没有锚定角色。${isServiceEditor() ? '可使用“新建角色”添加。' : '可以从“本轮生图”挑一张图片，也可以直接新建。'}</p>` : ''}
+      <div data-anchor-results>${this.anchorResults()}</div>`;
+    }
+    searchStatus() {
+        const matches = this.matchingAnchors().length;
+        return this.librarySearch.trim() ? `匹配 ${matches} / ${this.anchors.length} 人` : `共 ${this.anchors.length} 人`;
+    }
+    anchorResults() {
+        const query = this.librarySearch.trim();
+        const matches = this.matchingAnchors();
+        return `${query && !matches.length ? `<p class="anchor-empty" role="status">没有名称、别名或服装含「${escape(query)}」的角色。</p>` : ''}
+      <div class="anchor-library">${matches.map(anchor => this.anchorRecord(anchor)).join('')}</div>`;
+    }
+    /** Typing in the search box redraws only the results, so the box keeps its focus, caret and input-method composition. */
+    renderLibrary() {
+        const results = this.container?.querySelector('[data-anchor-results]');
+        if (!results || this.draft || this.tab !== 'anchors')
+            return;
+        this.releaseUrls();
+        results.innerHTML = this.anchorResults();
+        const status = this.container?.querySelector('[data-anchor-search-status]');
+        if (status)
+            status.textContent = this.searchStatus();
     }
     sharedLibraryView() {
         return `<div class="anchor-toolbar"><p class="config-status">保存可供角色共用的服装。用 #服装名调用时，未指定服装的 @角色 仅展开固定外貌，避免叠加默认装。</p>
@@ -478,6 +516,11 @@ export class AnchorConfig {
         if (this.sharedDraft && (sharedKey === 'name' || sharedKey === 'tags')) {
             this.sharedDraft[sharedKey] = field.value;
             this.markSharedDirty();
+            return;
+        }
+        if (field instanceof HTMLInputElement && field.hasAttribute('data-anchor-search')) {
+            this.librarySearch = field.value;
+            this.renderLibrary();
             return;
         }
         if (!this.draft)
