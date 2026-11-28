@@ -101,6 +101,7 @@ const api: RisuApi = {
         path: target.pathname,
         method,
         networkRoute: options?.networkRoute,
+        retainResult: options?.retainResult,
         body: options?.body
           ? typeof options.body === "string"
             ? (JSON.parse(options.body) as unknown)

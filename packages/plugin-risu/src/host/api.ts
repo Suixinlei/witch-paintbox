@@ -10,6 +10,7 @@ export interface NativeFetchOptions extends RequestInit {
   networkRoute?: string;
   logFetch?: boolean;
   requestTimeoutMs?: number;
+  retainResult?: boolean;
 }
 export interface RisuApi {
   readServerFile(name: string): Promise<string | null>;

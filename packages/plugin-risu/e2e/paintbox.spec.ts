@@ -131,6 +131,10 @@ test("Risu automatically draws every planned image once and attaches them after 
   });
   expect(second).toMatchObject({ awaitingClick: false, state: "complete" });
   const state = await snapshot(page);
+  for (const call of state.calls.filter(({ kind }) => kind === "paintbox")) {
+    const request = call.payload as { method: string; retainResult: boolean };
+    expect(request.retainResult).toBe(request.method === "POST");
+  }
   expect(state.attachments[0]).toMatchObject({
     expectedRawMessageText: reply,
     images: [

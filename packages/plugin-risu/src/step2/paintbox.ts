@@ -162,6 +162,7 @@ export function createPaintbox(
       },
       ...(body === null ? {} : { body: JSON.stringify(body) }),
       networkRoute: "local_network",
+      retainResult: body !== null,
       logFetch: false,
       requestTimeoutMs: timeout,
     });
