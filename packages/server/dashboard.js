@@ -641,6 +641,16 @@ window.addEventListener('hashchange', () => {
   if (!byId('dashboard').hidden) showPage(true);
 });
 
+// 嵌在页面里的插件面板按「画匣色调」选日间或夜间；外壳和角色卡的人物编辑器跟着它们，整页才是同一张纸。
+const themeSource = byId('service-editor');
+function followTheme() {
+  const theme = themeSource.dataset.theme === 'night' ? 'night' : 'day';
+  document.documentElement.dataset.theme = theme;
+  byId('card-people').dataset.theme = theme;
+}
+new MutationObserver(followTheme).observe(themeSource, { attributes: true, attributeFilter: ['data-theme'] });
+followTheme();
+
 async function loadEditor() {
   const container = byId('service-editor');
   const retry = byId('retry-editor');
