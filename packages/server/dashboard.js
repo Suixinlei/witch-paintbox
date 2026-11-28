@@ -11,9 +11,82 @@ const prefsForm = byId('risu-preferences');
 const cardSelect = byId('risu-card');
 const historySelect = byId('history-scope');
 const historyMore = byId('history-more');
-const navigation = new Map(Array.from(document.querySelectorAll('[data-dashboard-page]'), link => [link.dataset.dashboardPage, link]));
+
+// Pages in navigation order. `scope` names whose settings they hold, `editor` marks the
+// pages the service editor draws, and `sections` lists what to show when the page is not its own section.
+const scopes = {
+  global: ['全局', '四方与 Risu 共用'],
+  sifang: ['四方世界'],
+  risu: ['Risu'],
+  records: ['记录'],
+};
+const pages = [
+  { id: 'overview', title: '服务概览', description: '各范围的状态和入口。' },
+  { id: 'image', scope: 'global', title: '生图 API 与参数', editor: true,
+    description: '绘图服务的连接、密钥、模型与采样参数。四方与 Risu 生图共用。' },
+  { id: 'artists', scope: 'global', title: '画师词与试绘', editor: true,
+    description: '画师预设的正面与负面提示词，并用当前配置试画一张。Risu 角色卡在「角色卡」页选用这里的预设。' },
+  { id: 'model', scope: 'global', title: '模型连接', editor: true,
+    description: '读正文、写配图提示词的模型接口，四方与 Risu 共用。' },
+  { id: 'prompts', scope: 'global', title: '正文处理 Prompt', editor: true,
+    description: '发给模型的预设：条目顺序与内容、世界书和角色资料等功能层、配图标记解析。' },
+  { id: 'worldbooks', scope: 'global', title: '世界书', editor: true,
+    description: '上传世界书并挂载条目，由「正文处理 Prompt」里的世界书层发送给模型。' },
+  { id: 'outfits', scope: 'global', title: '通用服装', editor: true,
+    description: '各角色共用的服装，用 #服装名 调用；四方角色和 Risu 人物都能使用。' },
+  { id: 'transfer', scope: 'global', title: '配置导入与导出', editor: true,
+    description: '把服务里保存的配置导出为 JSON 备份或分享，或导入一份配置文件。' },
+  { id: 'anchors', scope: 'sifang', title: '角色锚点', editor: true,
+    description: '四方世界角色的固定外貌、人设图和各自的服装库。Risu 的人物锚点在每张角色卡里单独维护。' },
+  { id: 'sifang-workflow', scope: 'sifang', title: '自动配图', editor: true,
+    description: '四方世界客户端在回复后的自动写 Tag 与自动出图，以及出图的等待间隔。' },
+  { id: 'sifang-appearance', scope: 'sifang', title: '桌宠与外观', editor: true,
+    description: '四方世界客户端的桌宠缇娅与画匣色调。色调同时作用于本管理台的配置面板。' },
+  { id: 'risu-workflow', scope: 'risu', title: '自动配图',
+    description: 'Risu 插件回复完成后的自动配图。模型、生图参数和画师预设沿用全局配置。' },
+  { id: 'cards', scope: 'risu', title: '角色卡',
+    description: '每张 Risu 角色卡自己的资料：卡片设定、画师预设、人物锚点和场景 Prompt。' },
+  { id: 'history', scope: 'records', title: '生图历史', editor: true, sections: ['editor', 'history'],
+    description: '服务保存的配图，按来源筛选。页面底部可以设置图片保留多久。' },
+];
+const pagesById = new Map(pages.map(page => [page.id, page]));
+const pageSections = ['overview', 'editor', 'risu-workflow', 'cards', 'history'];
+// Addresses of pages that were split or moved keep opening their closest successor.
+const moved = new Map([['global', 'image'], ['workflow', 'risu-workflow'], ['preferences', 'transfer']]);
+
+function scoped(tag, scope, className) {
+  const element = node(tag, undefined, className);
+  element.dataset.scope = scope;
+  return element;
+}
+
+function buildNavigation() {
+  const nav = document.querySelector('.page-nav');
+  const link = page => {
+    const anchor = node('a', page.title);
+    anchor.href = '#' + page.id;
+    anchor.dataset.dashboardPage = page.id;
+    return anchor;
+  };
+  let group;
+  let options = pagePicker;
+  for (const page of pages) {
+    if (!page.scope) { nav.append(link(page)); pagePicker.append(new Option(page.title, page.id)); continue; }
+    if (group?.dataset.scope !== page.scope) {
+      group = scoped('div', page.scope, 'page-nav-group');
+      group.append(node('p', scopes[page.scope][0]));
+      nav.append(group);
+      options = Object.assign(document.createElement('optgroup'), { label: scopes[page.scope][0] });
+      pagePicker.append(options);
+    }
+    group.append(link(page));
+    options.append(new Option(page.title, page.id));
+  }
+}
+
 const pagePicker = byId('page-picker');
-pagePicker.append(...Array.from(navigation, ([page, link]) => new Option(link.textContent, page)));
+buildNavigation();
+const navigation = new Map(pages.map(page => [page.id, document.querySelector(`.page-nav [data-dashboard-page="${page.id}"]`)]));
 pagePicker.addEventListener('change', () => { location.hash = pagePicker.value; });
 let risuReady;
 let activePage;
@@ -36,9 +109,13 @@ function rememberToken(value) {
     else sessionStorage.removeItem(sessionKey);
   } catch { /* The current page can still use its in-memory token. */ }
 }
+let summary;
+let risuOverview;
+let risuOverviewRequest;
 let risuState;
 let cardDraft;
 let unmountCardAnchors;
+let cardPeopleView;
 let cardRequest;
 let artistPresets;
 let historyRequest;
@@ -52,8 +129,8 @@ function node(tag, value, className) {
   return element;
 }
 
-function status(id, message = '', error = false) {
-  const element = byId(id);
+function status(target, message = '', error = false) {
+  const element = typeof target === 'string' ? byId(target) : target;
   element.textContent = message;
   element.toggleAttribute('data-error', error);
 }
@@ -84,13 +161,79 @@ function details(id, fields, className = 'detail') {
   }));
 }
 
-function showSummary({ address, directory, revision, history, image, model, libraries }) {
-  details('facts', Object.entries({
-    四方角色锚点: libraries?.anchors, 世界书: libraries?.worldbooks, 通用服装: libraries?.outfits,
-    氛围参考: libraries?.vibes, 历史图片: history,
-  }), 'fact');
-  details('storage', [['服务地址', address], ['数据目录', directory], ['全局配置', revision ? '已保存' : '待初始化'],
-    ['当前生图通道', image?.provider], ['生图模型', image?.model], ['正文处理模型', model?.name || '待填写']]);
+function scopeCard(scope, note, rows) {
+  const [name] = scopes[scope];
+  const card = scoped('section', scope, 'scope-card');
+  const title = node('h3', name);
+  if (note) title.append(node('small', note));
+  const links = node('nav');
+  links.setAttribute('aria-label', name + '的页面');
+  for (const page of pages.filter(item => item.scope === scope)) {
+    const link = node('a', page.title);
+    link.href = '#' + page.id;
+    links.append(link);
+  }
+  const head = node('header', undefined, 'scope-head');
+  head.append(title, links);
+  const facts = node('dl', undefined, 'scope-facts');
+  for (const [label, value] of rows) {
+    const row = node('div');
+    row.append(node('dt', label), node('dd', value ?? '—'));
+    facts.append(row);
+  }
+  card.append(head, facts);
+  return card;
+}
+
+function renderOverview(risuError = '') {
+  const libraries = summary?.libraries;
+  const preferences = summary?.preferences;
+  const { image, model, history } = summary ?? {};
+  const sifangFlow = !preferences ? '—' : preferences.autoProcessReplies && preferences.autoGenerateImages ? '正文完成 → 模型写 Tag → 自动出图'
+    : preferences.autoProcessReplies ? '正文完成 → 模型写 Tag，图片手动生成'
+    : preferences.autoGenerateImages ? '新配图标记自动出图，不自动写 Tag' : '已关闭';
+  const risu = risuError ? undefined : risuOverview;
+  const risuAutomatic = risu?.preferences.enabled
+    ? `已开启 · 每楼最多 ${risu.preferences.maxIllustrations} 张${risu.preferences.dynamicSize ? ' · 动态画幅' : ''}` : '已关闭';
+  const risuCards = risu?.cards.length
+    ? `${risu.cards.length} 张 · ${risu.cards.map(card => `${card.name}（${card.people} 人 · ${card.backgrounds} 处场景）`).join('、')}`
+    : '还没有角色卡';
+  byId('scopes').replaceChildren(
+    scopeCard('global', scopes.global[1], [
+      ['生图', image ? `${image.provider} · ${image.model}${image.configured ? '' : '（未保存密钥）'}` : '待初始化'],
+      ['画师预设', image ? `${image.artists} 套` : '—'],
+      ['正文处理模型', model ? `${model.name || '待填写'}${model.preset ? ` · 预设「${model.preset}」` : ''}` : '待初始化'],
+      ['资料', libraries ? `世界书 ${libraries.worldbooks} 本 · 通用服装 ${libraries.outfits} 套 · 氛围参考 ${libraries.vibes} 张` : '—'],
+    ]),
+    scopeCard('sifang', '', [
+      ['角色锚点', libraries ? `${libraries.anchors} 人` : '—'],
+      ['自动配图', sifangFlow],
+    ]),
+    scopeCard('risu', '', [
+      ['自动配图', risu ? risuAutomatic : risuError ? '读取失败' : '正在读取…'],
+      ['角色卡', risu ? risuCards : risuError ?? '正在读取…'],
+    ]),
+    scopeCard('records', '', [
+      ['历史图片', history === undefined ? '—' : `${history} 张`],
+      ['自动清理', preferences ? preferences.imageRetentionDays ? `保留 ${preferences.imageRetentionDays} 天` : '关闭' : '—'],
+    ]),
+  );
+  details('storage', [['服务地址', summary?.address], ['数据目录', summary?.directory],
+    ['服务配置', summary ? summary.revision ? '已保存' : '待初始化' : '—']]);
+}
+
+async function refreshOverview() {
+  risuOverviewRequest?.abort();
+  const controller = new AbortController();
+  risuOverviewRequest = controller;
+  try {
+    const data = await json('admin/risu', undefined, controller.signal);
+    if (controller.signal.aborted) return;
+    risuOverview = data;
+    renderOverview();
+  } catch (error) {
+    if (!controller.signal.aborted && !deny(error)) renderOverview(error.message);
+  }
 }
 
 function appendPrompt(container, label, content) {
@@ -145,7 +288,7 @@ prefsForm.addEventListener('submit', async event => {
     } });
     risuState.revision = saved.revision;
     if (cardDraft?.revision === revision) cardDraft.revision = saved.revision;
-    status('risu-status', '已保存 Risu 全局设置。');
+    status('risu-status', '已保存 Risu 自动配图。');
   } catch (error) {
     status('risu-status', error.message, true);
   } finally { fields.disabled = false; }
@@ -188,20 +331,78 @@ async function loadArtistPresets() {
   } catch (error) { status('card-artist-status', error.message, true); }
 }
 
+function renderScenes(entry) {
+  const scenes = entry.library.backgrounds;
+  byId('card-scenes').replaceChildren(...scenes.map(sceneRow));
+  byId('card-scene-count').textContent = `${scenes.length} 项`;
+}
+
+function sceneRow(scene, index) {
+  const row = node('div', undefined, 'scene-row');
+  const remove = node('button', '删除', 'secondary scene-remove');
+  remove.type = 'button';
+  remove.setAttribute('aria-label', `删除场景 ${index + 1}`);
+  remove.addEventListener('click', () => confirmSceneRemoval(row));
+  row.append(node('span', String(index + 1), 'scene-index'), editable('场景名称', scene, 'name'), editable('场景描述', scene, 'description', true), remove);
+  return row;
+}
+
+function confirmSceneRemoval(row) {
+  if (row.querySelector('.scene-confirm')) return;
+  const confirm = node('div', undefined, 'scene-confirm');
+  confirm.setAttribute('role', 'alert');
+  const remove = node('button', '确认删除', 'secondary scene-remove');
+  const cancel = node('button', '取消', 'secondary');
+  remove.type = cancel.type = 'button';
+  remove.addEventListener('click', () => {
+    const entry = cardDraft?.entry;
+    const index = [...byId('card-scenes').children].indexOf(row);
+    if (index === -1 || !entry) return;
+    entry.library.backgrounds.splice(index, 1);
+    renderScenes(entry);
+    cardStatus('已从表单移除一个场景，点击「保存场景 Prompt」后生效。', false, 'scenes');
+  });
+  cancel.addEventListener('click', () => { confirm.remove(); row.querySelector('.scene-remove').focus(); });
+  confirm.append(node('span', '删除这个场景？保存场景 Prompt 后生效。'), remove, cancel);
+  row.append(confirm);
+  remove.focus();
+}
+
+byId('card-scene-add').addEventListener('click', () => {
+  if (!cardDraft) return;
+  cardDraft.entry.library.backgrounds.push({ name: '', description: '' });
+  renderScenes(cardDraft.entry);
+  byId('card-scenes').lastElementChild.querySelector('input').focus();
+});
+
+// Card messages show at the top; the panel whose button was used repeats the ones about saving.
+function cardStatus(message = '', error = false, panel) {
+  status('card-status', message, error);
+  for (const line of cardForm.querySelectorAll('.panel-status')) status(line);
+  if (message && panel) status(cardForm.querySelector(`[data-card-panel="${panel}"] .panel-status`), message, error);
+}
+
 function fieldsForCard(entry) {
   const { card, library } = entry;
   cardForm.elements.cardName.value = card.name;
   cardForm.elements.description.value = card.desc ?? '';
   cardForm.elements.scenario.value = card.scenario ?? '';
   fieldsForArtistPresets(entry);
+  renderScenes(entry);
+  byId('card-people-count').textContent = `${library.anchors.length} 人`;
   unmountCardAnchors?.();
-  const people = node('div');
-  const root = people.attachShadow({ mode: 'open' });
-  const style = node('link');
-  style.rel = 'stylesheet';
-  style.href = '/style.css';
+  // The editor draws into its own shadow tree so the plugin stylesheet cannot reach the dashboard.
+  const people = byId('card-people');
+  if (!people.shadowRoot) {
+    const style = node('link');
+    style.rel = 'stylesheet';
+    style.href = '/style.css';
+    people.attachShadow({ mode: 'open' }).append(style);
+  }
   const anchors = node('div');
-  root.append(style, anchors);
+  cardPeopleView?.remove();
+  cardPeopleView = anchors;
+  people.shadowRoot.append(anchors);
   unmountCardAnchors = mountRisuCardAnchors(anchors, () => library.anchors, async next => {
     const draft = cardDraft;
     if (!draft || draft.entry !== entry) throw new Error('角色卡已切换，请重新打开。');
@@ -211,13 +412,8 @@ function fieldsForCard(entry) {
     if (risuState.revision === draft.revision) risuState.revision = saved.revision;
     draft.revision = saved.revision;
     library.anchors = next;
+    byId('card-people-count').textContent = `${next.length} 人`;
   });
-  const backgrounds = promptGroup(`场景 Prompt · ${library.backgrounds.length} 项`);
-  for (const scene of library.backgrounds) {
-    backgrounds.append(editable('场景名称', scene, 'name'), editable('场景描述', scene, 'description', true));
-  }
-  if (!library.backgrounds.length) backgrounds.append(node('p', '本卡暂无场景资料。', 'muted'));
-  byId('card-library').replaceChildren(people, backgrounds);
 }
 
 function updateCardFields(entry) {
@@ -234,8 +430,8 @@ async function loadCard() {
   cardForm.hidden = true;
   byId('card-advanced').open = false;
   const id = cardSelect.value;
-  byId('card-history').hidden = !id;
-  status('card-status', id ? '正在读取本卡资料…' : `共 ${risuState?.cards.length ?? 0} 张角色卡。`);
+  byId('card-history').hidden = byId('card-reload').hidden = !id;
+  cardStatus(id ? '正在读取本卡资料…' : `共 ${risuState?.cards.length ?? 0} 张角色卡。`);
   if (!id) return;
   const controller = new AbortController();
   cardRequest = controller;
@@ -245,9 +441,9 @@ async function loadCard() {
     fieldsForCard(data.entry);
     cardDraft = data;
     cardForm.hidden = false;
-    status('card-status');
+    cardStatus();
   } catch (error) {
-    if (!controller.signal.aborted) status('card-status', error.message, true);
+    if (!controller.signal.aborted) cardStatus(error.message, true);
   }
 }
 
@@ -275,18 +471,28 @@ byId('card-apply-json').addEventListener('click', () => {
     fieldsForCard(entry);
     cardDraft.entry = entry;
     byId('card-advanced').open = false;
-    status('card-status', '已载入表单，点击「保存本卡资料」提交。');
-  } catch (error) { status('card-status', error.message, true); }
+    cardStatus('已载入表单，点击「保存卡片资料」或「保存场景 Prompt」提交。');
+  } catch (error) { cardStatus(error.message, true); }
 });
 cardForm.addEventListener('submit', async event => {
   event.preventDefault();
   const draft = cardDraft;
   if (!draft) return;
   updateCardFields(draft.entry);
+  // Enter in a field submits too, where there is no submitter to name the panel.
+  const origin = event.submitter ?? document.activeElement;
+  const panel = origin?.closest?.('[data-card-panel]')?.dataset.cardPanel;
+  const report = (message, error = false) => cardStatus(message, error, panel);
+  const blank = draft.entry.library.backgrounds.findIndex(scene => !scene.name.trim());
+  if (blank !== -1) {
+    report(`第 ${blank + 1} 个场景还没有名称，请填写后再保存。`, true);
+    byId('card-scenes').children[blank]?.querySelector('input')?.focus();
+    return;
+  }
   const id = cardSelect.value;
   const fields = cardForm.querySelector('fieldset');
   fields.disabled = cardSelect.disabled = true;
-  status('card-status', '正在保存本卡资料…');
+  report('正在保存本卡资料…');
   try {
     const { revision } = await json('admin/risu/cards', { revision: draft.revision, cards: [draft.entry] });
     if (risuState.revision === draft.revision) risuState.revision = revision;
@@ -295,8 +501,8 @@ cardForm.addEventListener('submit', async event => {
     if (card) card.name = draft.entry.card.name;
     cardSelect.selectedOptions[0].text = draft.entry.card.name;
     if (byId('card-advanced').open) byId('card-json').value = JSON.stringify(draft.entry, null, 2);
-    status('card-status', '已保存本卡资料。');
-  } catch (error) { status('card-status', error.message, true); }
+    report('已保存本卡资料。');
+  } catch (error) { report(error.message, true); }
   finally { fields.disabled = cardSelect.disabled = false; }
 });
 
@@ -396,23 +602,30 @@ byId('card-history').addEventListener('click', () => {
 
 function showPage(focus = false) {
   const requested = location.hash.slice(1);
-  const page = navigation.has(requested) ? requested : requested === 'global' ? 'image' : 'overview';
-  const link = navigation.get(page);
+  const page = pagesById.has(requested) ? requested : moved.get(requested) ?? 'overview';
+  if (page !== requested) history.replaceState(null, '', '#' + page);
   if (activePage === page) return;
   activePage = page;
+  const info = pagesById.get(page);
+  const scope = info.scope ? scopes[info.scope][0] : '';
   pagePicker.value = page;
   for (const [name, tab] of navigation) {
     if (name === page) tab.setAttribute('aria-current', 'page');
     else tab.removeAttribute('aria-current');
   }
   const heading = byId('page-heading');
-  heading.textContent = link.textContent;
-  document.title = link.textContent + ' · 魔女画匣';
-  byId('global').hidden = !link.hasAttribute('data-editor');
-  byId('global-editor').dataset.page = page;
-  byId('risu-workflow').hidden = page !== 'workflow';
-  for (const section of ['overview', 'cards', 'history']) byId(section).hidden = section !== page;
+  heading.textContent = info.title;
+  const content = byId('page-content');
+  content.dataset.page = page;
+  content.dataset.scope = info.scope ?? '';
+  byId('page-scope').textContent = scope;
+  byId('page-description').textContent = info.description ?? '';
+  document.title = (scope ? scope + ' · ' : '') + info.title + ' · 魔女画匣';
+  const shown = info.sections ?? (info.editor ? ['editor'] : [page]);
+  for (const section of pageSections) byId(section).hidden = !shown.includes(section);
+  byId('service-editor').dataset.page = page;
   if (page === 'cards') void loadArtistPresets();
+  if (page === 'overview') void refreshOverview();
   if (focus) {
     heading.focus({ preventScroll: true });
     window.scrollTo(0, 0);
@@ -429,10 +642,10 @@ window.addEventListener('hashchange', () => {
 });
 
 async function loadEditor() {
-  const container = byId('global-editor');
+  const container = byId('service-editor');
   const retry = byId('retry-editor');
   retry.hidden = true;
-  status('editor-error', '正在读取全局配置…');
+  status('editor-error', '正在读取服务配置…');
   try {
     const { mountServiceEditor } = await import('/dist/service-editor.js');
     await mountServiceEditor(container, { url: location.origin, token });
@@ -447,9 +660,11 @@ byId('retry-editor').addEventListener('click', loadEditor);
 
 async function refresh() {
   try {
-    showSummary(await json('admin/summary'));
+    summary = await json('admin/summary');
+    renderOverview();
     status('error');
   } catch (error) { status('error', error.message, true); }
+  void refreshOverview();
   if (!risuState) await loadRisu();
   if (activePage === 'cards') await loadArtistPresets();
 }
@@ -495,7 +710,8 @@ async function connect(candidate, restoring = false) {
   token = candidate;
   status('error', '正在连接…');
   try {
-    showSummary(await json('admin/summary', undefined, AbortSignal.timeout(8000)));
+    summary = await json('admin/summary', undefined, AbortSignal.timeout(8000));
+    renderOverview();
     rememberToken(candidate);
     auth.reset();
     auth.hidden = true;

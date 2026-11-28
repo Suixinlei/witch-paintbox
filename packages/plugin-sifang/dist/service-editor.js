@@ -12,7 +12,7 @@ import { bindPaintboxTheme } from './paintbox-theme.js';
 import { bindServiceConfig, initializeServiceDraft, pullServiceConfig, serviceConfigStatus } from './service-config.js';
 import { sendService, setEditorConnection } from './service-client.js';
 import { bindLocalPreferences, defaultSettings, isPaintboxTheme, readAutoImageDelay, readPetScale, readSettings, saveSettings } from './settings.js';
-import { clientAppearanceView, imageWorkflowView, workflowStatus } from './views.js';
+import { clientAppearanceView, imageRetentionView, imageWorkflowView, workflowStatus } from './views.js';
 export async function mountServiceEditor(container, connection, options = {}) {
     setEditorConnection(connection);
     initializeEditorStorage();
@@ -38,7 +38,8 @@ export async function mountServiceEditor(container, connection, options = {}) {
         const select = (selector) => root.querySelector(selector);
         const preferenceFields = () => {
             const settings = readSettings(context);
-            select('#service-workflow-fields').innerHTML = imageWorkflowView(settings);
+            select('#service-workflow-fields').innerHTML = imageWorkflowView(settings, false);
+            select('#service-retention-fields').innerHTML = imageRetentionView(settings);
             select('#service-appearance-fields').innerHTML = clientAppearanceView(settings);
         };
         const transfer = new ConfigTransfer(context, (kind, provider) => {
@@ -67,16 +68,18 @@ export async function mountServiceEditor(container, connection, options = {}) {
             outfits.mount(select('#service-outfit-fields'), 'shared-outfits', true);
         };
         bindImageHistorySync(signal);
+        // data-editor-page names the dashboard page a panel belongs to; the stylesheet hides the rest.
         root.innerHTML = `
-      <section class="service-inline" aria-label="全局配置编辑">
+      <section class="service-inline" aria-label="服务配置编辑">
         <p data-editor-status class="config-status service-sync" role="status"></p>
         <section id="service-image" class="service-editor-panel"><div data-image-settings></div></section>
         <div data-model-settings></div>
         <section id="service-anchors" data-editor-page="anchors" class="service-editor-panel"><div id="service-anchor-fields"></div></section>
         <section id="service-outfits" data-editor-page="outfits" class="service-editor-panel"><div id="service-outfit-fields"></div></section>
-        <section id="service-workflow" data-editor-page="workflow" class="service-editor-panel"><h3>四方自动配图与图片留存</h3><div id="service-workflow-fields"></div></section>
-        <section id="service-appearance" data-editor-page="preferences" class="service-editor-panel"><h3>客户端外观</h3><div id="service-appearance-fields"></div></section>
-        <section id="service-transfer" data-editor-page="preferences" class="service-editor-panel"><h3>全局配置导入与导出</h3><div data-config-transfer></div></section>
+        <section id="service-workflow" data-editor-page="sifang-workflow" class="service-editor-panel"><div id="service-workflow-fields"></div></section>
+        <section id="service-appearance" data-editor-page="sifang-appearance" class="service-editor-panel"><div id="service-appearance-fields"></div></section>
+        <section id="service-transfer" data-editor-page="transfer" class="service-editor-panel"><div data-config-transfer></div></section>
+        <section id="service-retention" data-editor-page="history" class="service-editor-panel"><div id="service-retention-fields"></div></section>
       </section>`;
         const stylesheet = document.createElement('link');
         stylesheet.rel = 'stylesheet';
@@ -138,11 +141,12 @@ export async function mountServiceEditor(container, connection, options = {}) {
             else if (action === 'reset-image-workflow') {
                 const settings = readSettings(context);
                 const defaults = defaultSettings();
-                for (const key of ['autoProcessReplies', 'autoGenerateImages', 'autoImageDelay', 'imageRetentionDays']) {
+                // 图片留存 sits on the history page in the dashboard, so this reset leaves it alone.
+                for (const key of ['autoProcessReplies', 'autoGenerateImages', 'autoImageDelay']) {
                     Object.assign(settings, { [key]: defaults[key] });
                 }
                 saveSettings(context, settings);
-                select('#service-workflow-fields').innerHTML = imageWorkflowView(settings);
+                select('#service-workflow-fields').innerHTML = imageWorkflowView(settings, false);
                 select('#service-workflow [data-feedback]').textContent = '已恢复默认生图设置。';
                 select('#service-workflow [data-action="reset-image-workflow"]').focus();
             }
@@ -157,7 +161,7 @@ export async function mountServiceEditor(container, connection, options = {}) {
             if (!(field instanceof HTMLInputElement || field instanceof HTMLSelectElement))
                 return;
             if (transfer.isApplying) {
-                if (field.closest('#service-workflow, #service-appearance'))
+                if (field.closest('#service-workflow, #service-appearance, #service-retention'))
                     preferenceFields();
                 return;
             }

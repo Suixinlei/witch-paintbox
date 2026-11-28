@@ -35,91 +35,121 @@
       </dl>
       <p id="live-check" class="muted live-check"></p>
       <div class="dashboard-workspace">
-        <nav class="page-nav" aria-label="管理台页面">
-          <a href="#overview" data-dashboard-page="overview">服务概览</a>
-          <div class="page-nav-group">
-            <p>全局配置</p>
-            <a href="#image" data-dashboard-page="image" data-editor>生图 API 与参数</a>
-            <a href="#artists" data-dashboard-page="artists" data-editor>画师词与试绘</a>
-            <a href="#model" data-dashboard-page="model" data-editor>模型连接</a>
-            <a href="#prompts" data-dashboard-page="prompts" data-editor>正文处理 Prompt</a>
-            <a href="#workflow" data-dashboard-page="workflow" data-editor>配图工作流</a>
-            <a href="#preferences" data-dashboard-page="preferences" data-editor>偏好与配置文件</a>
-          </div>
-          <div class="page-nav-group">
-            <p>共享资料</p>
-            <a href="#worldbooks" data-dashboard-page="worldbooks" data-editor>世界书</a>
-            <a href="#anchors" data-dashboard-page="anchors" data-editor>四方角色锚点</a>
-            <a href="#outfits" data-dashboard-page="outfits" data-editor>通用服装</a>
-          </div>
-          <div class="page-nav-group">
-            <p>角色卡与记录</p>
-            <a href="#cards" data-dashboard-page="cards">Risu 角色卡</a>
-            <a href="#history" data-dashboard-page="history">生图历史</a>
-          </div>
-        </nav>
+        <nav class="page-nav" aria-label="管理台页面"></nav>
         <label class="page-picker">切换页面<select id="page-picker"></select></label>
-        <div class="page-content">
-          <h2 id="page-heading" tabindex="-1">服务概览</h2>
+        <div class="page-content" id="page-content">
+          <header class="page-header">
+            <p class="page-scope" id="page-scope"></p>
+            <h2 id="page-heading" tabindex="-1">服务概览</h2>
+            <p class="page-description" id="page-description"></p>
+          </header>
           <section id="overview" aria-labelledby="page-heading">
-            <dl class="facts" id="facts"></dl>
+            <div class="scopes" id="scopes"></div>
             <div class="panel storage">
-              <h3>本机存储与服务状态</h3>
+              <h3>本机服务</h3>
               <dl id="storage"></dl>
             </div>
           </section>
-          <section id="global" aria-labelledby="page-heading" hidden>
-            <section class="panel" id="risu-workflow" hidden>
-              <h3>Risu 全局自动配图</h3>
-              <form id="risu-preferences">
-                <fieldset disabled>
-                  <label class="check"><input type="checkbox" name="enabled"> 回复完成后自动准备配图概括（不生图）</label>
-                  <label class="check"><input type="checkbox" name="dynamicSize"> 动态画幅</label>
-                  <label>每楼最多张数<input type="number" name="maxIllustrations" min="1" max="6" required></label>
-                  <label>输入字符上限<input type="number" name="maxInputChars" min="1000" max="262144" required></label>
-                  <label class="check"><input type="checkbox" name="statusPortraits"> 状态面板肖像取用画匣人设图</label>
-                  <button>保存 Risu 全局设置</button>
-                </fieldset>
-              </form>
-              <p id="risu-status" class="status" role="status"></p>
-            </section>
-            <div id="global-editor"></div>
+          <section id="editor" aria-labelledby="page-heading" hidden>
+            <div id="service-editor"></div>
             <p id="editor-error" class="status" role="status"></p>
-            <button type="button" id="retry-editor" class="secondary" hidden>重新读取全局配置</button>
+            <button type="button" id="retry-editor" class="secondary" hidden>重新读取服务配置</button>
+          </section>
+          <section id="risu-workflow" aria-labelledby="page-heading" hidden>
+            <form id="risu-preferences" class="panel">
+              <fieldset disabled>
+                <div class="setting-list">
+                  <label class="setting">
+                    <span><strong>回复后自动配图</strong><small>回复完成后自动让模型挑选画面、写好配图概括；图片仍由你在楼层里点击生成。会消耗正文处理模型的额度。</small></span>
+                    <input type="checkbox" name="enabled">
+                  </label>
+                  <label class="setting">
+                    <span><strong>动态画幅</strong><small>由模型按画面内容决定每张图的尺寸；关闭后统一使用全局「生图 API 与参数」里的画幅。</small></span>
+                    <input type="checkbox" name="dynamicSize">
+                  </label>
+                  <label class="setting">
+                    <span><strong>每楼最多张数</strong><small>单条回复最多准备的配图数量，1～6 张。</small></span>
+                    <input type="number" name="maxIllustrations" min="1" max="6" required>
+                  </label>
+                  <label class="setting">
+                    <span><strong>输入字符上限</strong><small>交给模型的正文最多保留的字符数。</small></span>
+                    <input type="number" name="maxInputChars" min="1000" max="262144" required>
+                  </label>
+                  <label class="setting">
+                    <span><strong>状态面板肖像取用画匣人设图</strong><small>按消息里的 varId 匹配本卡人物的画匣人设图，用作状态面板的肖像。</small></span>
+                    <input type="checkbox" name="statusPortraits">
+                  </label>
+                </div>
+                <div class="panel-actions">
+                  <button>保存 Risu 自动配图</button>
+                  <p id="risu-status" class="status" role="status"></p>
+                </div>
+              </fieldset>
+            </form>
           </section>
           <section id="cards" aria-labelledby="page-heading" hidden>
-            <p class="muted">描述、场景和配图资料按卡保存。模型、生图参数和自动配图开关沿用全局配置。</p>
             <div class="panel">
               <div class="toolbar">
                 <label>角色卡<select id="risu-card"><option value="">选择角色卡</option></select></label>
-                <button type="button" id="card-history" class="secondary" hidden>查看本卡生图历史</button>
+                <div class="toolbar-actions">
+                  <button type="button" id="card-history" class="secondary" hidden>查看本卡生图历史</button>
+                  <button type="button" id="card-reload" class="secondary" hidden>重新读取本卡</button>
+                </div>
               </div>
               <p id="card-status" class="status" role="status"></p>
-              <form id="card-form" hidden>
-                <fieldset>
+            </div>
+            <form id="card-form" hidden>
+              <fieldset>
+                <section class="panel card-panel" data-card-panel="card" aria-labelledby="card-panel-heading">
+                  <header class="panel-heading">
+                    <h3 id="card-panel-heading">卡片资料</h3>
+                    <p>名称与设定会作为配图上下文交给模型。模型连接、生图参数和自动配图开关不在这里设置。</p>
+                  </header>
                   <div class="grid">
                     <label class="wide">角色卡名称<input name="cardName" required maxlength="2048"></label>
-                    <label>角色描述<textarea name="description" rows="5"></textarea></label>
-                    <label>场景设定<textarea name="scenario" rows="5"></textarea></label>
+                    <label>角色描述<textarea name="description" rows="6"></textarea></label>
+                    <label>场景设定<textarea name="scenario" rows="6"></textarea></label>
                   </div>
-                  <h3>本卡画师预设</h3>
-                  <p class="muted">在全局「画师词与试绘」维护预设。本卡可以为每个生图通道选用一个预设，使用时跟随预设的最新内容。默认沿用全局画师词。</p>
-                  <div id="card-artist-presets" class="grid"></div>
-                  <p id="card-artist-status" class="status" role="status"></p>
-                  <div id="card-library" class="prompt-list"></div>
-                  <div class="actions">
-                    <button>保存本卡资料</button>
-                    <button type="button" id="card-reload" class="secondary">重新读取本卡</button>
+                  <div class="subblock">
+                    <h4>画师预设</h4>
+                    <p class="muted">本卡可以为每个生图通道选用一个预设，使用时跟随预设的最新内容；不选则沿用全局画师词。预设本身在全局「画师词与试绘」维护。</p>
+                    <div id="card-artist-presets" class="grid"></div>
+                    <p id="card-artist-status" class="status" role="status"></p>
                   </div>
-                  <details id="card-advanced">
-                    <summary>高级 · 角色卡与资料 JSON</summary>
-                    <label for="card-json">完整角色卡与资料</label>
-                    <textarea id="card-json" rows="14" spellcheck="false"></textarea>
-                    <button type="button" id="card-apply-json" class="secondary">载入 JSON 到表单</button>
-                  </details>
-                </fieldset>
-              </form>
-            </div>
+                  <div class="panel-actions">
+                    <button>保存卡片资料</button>
+                    <p class="status panel-status" role="status"></p>
+                  </div>
+                </section>
+                <section class="panel card-panel" data-card-panel="people" aria-labelledby="card-people-heading">
+                  <header class="panel-heading">
+                    <h3 id="card-people-heading">人物锚点<span class="count" id="card-people-count"></span></h3>
+                    <p>固定外貌与服装按角色单独保存：改动后点编辑器里的「保存角色」即生效，不需要再保存整张卡。</p>
+                  </header>
+                  <div id="card-people"></div>
+                </section>
+                <section class="panel card-panel" data-card-panel="scenes" aria-labelledby="card-scenes-heading">
+                  <header class="panel-heading panel-heading-row">
+                    <div>
+                      <h3 id="card-scenes-heading">场景 Prompt<span class="count" id="card-scene-count"></span></h3>
+                      <p>写进本卡上下文的场景，供模型挑选画面时参考。</p>
+                    </div>
+                    <button type="button" id="card-scene-add" class="secondary">＋ 新增场景</button>
+                  </header>
+                  <div id="card-scenes" class="scene-list"></div>
+                  <div class="panel-actions">
+                    <button>保存场景 Prompt</button>
+                    <p class="status panel-status" role="status"></p>
+                  </div>
+                </section>
+                <details id="card-advanced" class="panel">
+                  <summary>高级 · 角色卡与资料 JSON</summary>
+                  <label for="card-json">完整角色卡与资料</label>
+                  <textarea id="card-json" rows="14" spellcheck="false"></textarea>
+                  <button type="button" id="card-apply-json" class="secondary">载入 JSON 到表单</button>
+                </details>
+              </fieldset>
+            </form>
           </section>
           <section id="history" aria-labelledby="page-heading" hidden>
             <div class="panel">

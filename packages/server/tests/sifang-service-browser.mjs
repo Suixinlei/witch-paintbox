@@ -67,8 +67,21 @@ try {
   await admin.goto(service);
   await admin.locator('#token').fill(token);
   await admin.getByRole('button', { name: '进入管理' }).click();
-  const editor = admin.locator('#global-editor');
+  const editor = admin.locator('#service-editor');
   const adminHeaders = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
+  // Settings are filed by who uses them: shared, 四方 only, Risu only, then records.
+  assert.deepEqual(await admin.locator('.page-nav .page-nav-group').evaluateAll(groups => groups.map(group => [
+    group.dataset.scope, [...group.querySelectorAll('[data-dashboard-page]')].map(link => link.dataset.dashboardPage)])), [
+    ['global', ['image', 'artists', 'model', 'prompts', 'worldbooks', 'outfits', 'transfer']],
+    ['sifang', ['anchors', 'sifang-workflow', 'sifang-appearance']],
+    ['risu', ['risu-workflow', 'cards']],
+    ['records', ['history']],
+  ]);
+  assert.deepEqual(await admin.locator('#page-picker optgroup').evaluateAll(groups => groups.map(group => [
+    group.label, [...group.querySelectorAll('option')].map(option => option.value)])), [
+    ['全局', ['image', 'artists', 'model', 'prompts', 'worldbooks', 'outfits', 'transfer']],
+    ['四方世界', ['anchors', 'sifang-workflow', 'sifang-appearance']], ['Risu', ['risu-workflow', 'cards']], ['记录', ['history']],
+  ]);
   const seedCard = await fetch(service + '/v1/admin/risu/cards', { method: 'POST', headers: adminHeaders,
     body: JSON.stringify({ revision: null, cards: [{ card: { chaId: 'fixture-card', name: '测试卡' },
       library: { people: [], backgrounds: [] } }] }) });
@@ -78,6 +91,10 @@ try {
     await admin.locator(`[data-dashboard-page="${name}"][aria-current="page"]`).waitFor();
   };
   await admin.locator('#overview').waitFor();
+  // The card arrived after the page loaded; 刷新状态 picks it up.
+  await admin.locator('#refresh').click();
+  await admin.locator('#scopes [data-scope="risu"]').getByText(/测试卡（0 人 · 0 处场景）/).waitFor();
+  assert.equal(await admin.locator('#scopes [data-scope="sifang"] a').count(), 3);
   await navigate('image');
   await editor.locator('[data-image-settings] [data-connection="key"]').waitFor();
   assert.equal(await editor.locator('[data-action="switch-provider"]').count(), 0);
@@ -143,10 +160,18 @@ try {
   await modelFields.locator('[data-model-field="model"]').fill('fixture-local-model');
   await modelFields.locator('[data-model-action="save-model"]').click();
   await modelFields.locator('[data-model-status]').filter({ hasText: /^已保存。$/ }).waitFor();
-  await admin.locator('#storage').getByText('fixture-local-model', { exact: true }).waitFor({ state: 'attached' });
+  await admin.locator('#scopes').getByText('fixture-local-model').waitFor({ state: 'attached' });
 
-  await navigate('workflow');
+  // Risu and 四方 automation used to share one page; each now has its own.
+  await navigate('risu-workflow');
   await admin.locator('#risu-workflow').waitFor();
+  assert.ok(await editor.locator('[name="autoProcessReplies"]').isHidden());
+  assert.equal(await admin.title(), 'Risu · 自动配图 · 魔女画匣');
+  await navigate('sifang-workflow');
+  assert.ok(await admin.locator('#risu-workflow').isHidden());
+  assert.ok(await editor.locator('[data-worldbook-file]').isHidden());
+  await editor.locator('[name="autoProcessReplies"]').waitFor();
+  assert.ok(await editor.locator('[name="imageRetentionDays"]').isHidden());
   await admin.locator('[name="autoProcessReplies"]').check();
   await admin.locator('[name="autoGenerateImages"]').check();
   await admin.locator('[name="autoImageDelay"]').fill('0');
@@ -162,11 +187,47 @@ try {
   assert.equal(await editor.locator('dialog').count(), 0);
   for (const [name, control] of [
     ['anchors', '[data-anchor-action="new"]'], ['outfits', '[data-anchor-action="new-shared"]'],
-    ['worldbooks', '[data-worldbook-file]'], ['artists', '[data-field="positive"]'], ['preferences', '[data-transfer-file]'],
+    ['worldbooks', '[data-worldbook-file]'], ['artists', '[data-field="positive"]'], ['transfer', '[data-transfer-file]'],
+    ['sifang-appearance', '[name="petScale"]'],
   ]) {
     await navigate(name);
     await editor.locator(control).waitFor();
     assert.ok(await editor.locator('[data-image-settings] [data-connection="key"]').isHidden());
+  }
+  await navigate('transfer');
+  assert.ok(await editor.locator('[name="petScale"]').isHidden());
+  // A long character list gets a search box; shorter ones are scanned by eye.
+  await admin.evaluate(async () => {
+    const { saveAnchor } = await import('/dist/anchor-store.js');
+    for (const name of ['艾丽', '贝拉', '赛拉', '黛拉', '艾芙', '格蕾丝', '海伦', '伊莎']) {
+      await saveAnchor({ id: 'search-' + name, name, aliases: [], appearance: '1girl', negative: '',
+        outfits: [{ id: 'uniform', name: '校服', tags: 'school uniform' }], selectedOutfitId: '', portrait: null, updatedAt: Date.now() });
+    }
+  });
+  await navigate('anchors');
+  const anchorSearch = editor.locator('[data-anchor-search]');
+  await anchorSearch.waitFor();
+  assert.equal(await editor.locator('.anchor-record').count(), 8);
+  await anchorSearch.fill('海');
+  assert.equal(await editor.locator('.anchor-record').count(), 1);
+  assert.equal(await editor.locator('.anchor-record strong').textContent(), '海伦');
+  await anchorSearch.fill('校服');
+  assert.equal(await editor.locator('.anchor-record').count(), 8);
+  await anchorSearch.fill('不存在');
+  await editor.getByText('没有名称、别名或服装含「不存在」的角色。').waitFor();
+  assert.equal(await editor.locator('.anchor-record').count(), 0);
+  await anchorSearch.fill('伊');
+  await editor.locator('.anchor-record').getByText('伊莎', { exact: true }).click();
+  await editor.locator('[data-anchor-field="name"]').waitFor();
+  await editor.getByRole('button', { name: '返回列表' }).click();
+  // Coming back from the editor keeps the filter that found the character.
+  assert.equal(await anchorSearch.inputValue(), '伊');
+  assert.equal(await editor.locator('.anchor-record').count(), 1);
+  // Addresses from before the split open the page that took the settings over.
+  for (const [old, current] of [['workflow', 'risu-workflow'], ['preferences', 'transfer'], ['global', 'image']]) {
+    await admin.evaluate(hash => { location.hash = hash; }, old);
+    await admin.locator(`[data-dashboard-page="${current}"][aria-current="page"]`).waitFor();
+    assert.equal(new URL(admin.url()).hash, '#' + current);
   }
   await navigate('prompts');
   assert.ok(await modelFields.isHidden());
@@ -181,7 +242,7 @@ try {
   await admin.locator('#risu-card').selectOption('fixture-card');
   const artist = admin.getByLabel('NAI 画师预设');
   await artist.selectOption('ink');
-  const saveCard = () => admin.getByRole('button', { name: '保存本卡资料' }).click();
+  const saveCard = () => admin.getByRole('button', { name: '保存卡片资料' }).click();
   const cardSaved = () => admin.locator('#card-status').getByText('已保存本卡资料。').waitFor();
   await saveCard();
   await cardSaved();
@@ -195,6 +256,32 @@ try {
   await reloadCard();
   await artist.waitFor();
   assert.equal(await artist.inputValue(), '');
+  // A card is three panels; scenes are rows that can be added and removed without the JSON view.
+  assert.equal(await admin.locator('#card-form [data-card-panel]').count(), 3);
+  const scenes = admin.locator('#card-scenes');
+  const sceneStatus = admin.locator('[data-card-panel="scenes"] .panel-status');
+  const saveScenes = () => admin.getByRole('button', { name: '保存场景 Prompt' }).click();
+  await admin.getByRole('button', { name: '＋ 新增场景' }).click();
+  await saveScenes();
+  await sceneStatus.getByText('第 1 个场景还没有名称，请填写后再保存。').waitFor();
+  await scenes.getByLabel('场景名称').fill('庭院');
+  await scenes.getByLabel('场景描述').fill('moonlit garden');
+  await saveScenes();
+  await sceneStatus.getByText('已保存本卡资料。').waitFor();
+  await reloadCard();
+  assert.equal(await scenes.getByLabel('场景名称').inputValue(), '庭院');
+  assert.equal(await scenes.getByLabel('场景描述').inputValue(), 'moonlit garden');
+  assert.equal(await admin.locator('#card-scene-count').textContent(), '1 项');
+  await scenes.getByRole('button', { name: '删除场景 1' }).click();
+  await scenes.getByRole('button', { name: '取消', exact: true }).click();
+  assert.equal(await scenes.locator('.scene-row').count(), 1);
+  await scenes.getByRole('button', { name: '删除场景 1' }).click();
+  await scenes.getByRole('button', { name: '确认删除' }).click();
+  assert.equal(await scenes.locator('.scene-row').count(), 0);
+  await saveScenes();
+  await sceneStatus.getByText('已保存本卡资料。').waitFor();
+  await reloadCard();
+  assert.equal(await scenes.locator('.scene-row').count(), 0);
   await admin.goBack();
   await prompt.waitFor();
   assert.equal(await prompt.inputValue(), 'Unsaved prompt draft');
@@ -253,7 +340,7 @@ try {
   await admin.locator('#page-picker').selectOption('image');
   await editor.locator('[data-connection="key"]').waitFor();
   assert.ok(await admin.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-  await admin.locator('#page-picker').selectOption('workflow');
+  await admin.locator('#page-picker').selectOption('sifang-workflow');
   const processPreference = admin.locator('[name="autoProcessReplies"]');
   const saveWorkflow = () => admin.waitForResponse(response => response.url() === service + '/v1/config' && response.request().method() === 'POST');
   const disabledProcess = saveWorkflow();
@@ -415,6 +502,14 @@ try {
   const preview = admin.locator('.history-item img').first();
   await preview.waitFor();
   assert.equal(await preview.evaluate(async image => { await image.decode(); return image.naturalWidth; }), 64);
+  // How long pictures are kept belongs with the pictures, not with 四方 automation.
+  const retained = saveWorkflow();
+  await editor.locator('[name="imageRetentionDays"]').selectOption('7');
+  assert.ok((await retained).ok());
+  assert.equal((await (await fetch(service + '/v1/admin/summary', { headers: adminHeaders })).json()).preferences.imageRetentionDays, 7);
+  // The setting follows the gallery instead of pushing it down.
+  assert.ok(await admin.evaluate(() => document.getElementById('service-editor').shadowRoot.getElementById('service-retention')
+    .getBoundingClientRect().top > document.getElementById('history').getBoundingClientRect().top));
   await admin.locator('.history-details summary').first().click();
   await admin.locator('.history-details[open] pre').first().waitFor();
   assert.equal(await admin.locator('.history-item').first().getByRole('button', { name: '复制 Prompt', exact: true }).getAttribute('type'), 'button');
@@ -447,7 +542,7 @@ try {
   assert.equal(await page.evaluate(() => fixture.writes), 1);
   assert.match(await page.evaluate(() => fixture.status), /已发生变化/);
 
-  await admin.locator('#page-picker').selectOption('workflow');
+  await admin.locator('#page-picker').selectOption('sifang-workflow');
   const disabledDrawing = saveWorkflow();
   await admin.locator('[name="autoGenerateImages"]').uncheck();
   assert.ok((await disabledDrawing).ok());

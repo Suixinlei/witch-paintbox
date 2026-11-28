@@ -153,7 +153,7 @@ function hostSyncView() {
     <p class="config-status" data-host-sync-status role="status">${getSyncApiKeys() ? 'API 密钥会随 TT 扩展数据同步。' : 'API 密钥仅保留在本机。'}</p>
   </section>`;
 }
-export function imageWorkflowView(settings) {
+export function imageWorkflowView(settings, retention = true) {
     return `
     <section class="preference-section" aria-labelledby="image-habits-heading">
       <header class="section-heading section-heading--plain"><h3 id="image-habits-heading" class="section-title">自动配图</h3><p class="section-description">正文完成 → 模型写 Tag → 生成图片。两步可以分别开启。</p></header>
@@ -169,14 +169,19 @@ export function imageWorkflowView(settings) {
         <select name="imageConcurrency" aria-label="最大同时生图数">${Array.from({ length: MAX_IMAGE_CONCURRENCY }, (_, i) => i + 1).map(value => `<option value="${value}"${settings.imageConcurrency === value ? ' selected' : ''}>${value} 张</option>`).join('')}</select></label>`}
       <p class="config-status" data-image-queue-status role="status"></p>
     </section>
+    ${retention ? imageRetentionView(settings) : ''}
+    <div class="actions"><button type="button" class="secondary" data-action="reset-image-workflow">恢复默认生图设置</button><p class="muted" role="status" data-feedback>更改会自动保存。</p></div>`;
+}
+/** Separate from the workflow: the service dashboard shows it next to the history it cleans. */
+export function imageRetentionView(settings) {
+    return `
     <section class="preference-section" aria-labelledby="image-retention-heading">
       <header class="section-heading section-heading--plain"><h3 id="image-retention-heading" class="section-title">图片留存</h3><p class="section-description">${(isSifangEnvironment() || isServiceEditor()) ? '管理独立服务保存的图片历史。' : '管理保存在这台设备上的图片历史。'}</p></header>
       <label class="preference-row"><span><strong>自动清理生图</strong><span>按生成时间清理所有角色卡的本机图片历史；角色锚定图保留。${isServiceEditor() ? '服务运行期间每小时检查一次。' : '开启后立即清理，关闭酒馆期间的过期图片会在下次打开时清理。'}</span></span>
         <select name="imageRetentionDays" aria-label="图片保留时间">${[[0, '关闭'], [1, '保留 1 天'], [3, '保留 3 天'], [7, '保留 7 天']].map(([value, label]) => `<option value="${value}"${settings.imageRetentionDays === value ? ' selected' : ''}>${label}</option>`).join('')}</select></label>
       <p class="config-status" data-cleanup-status role="status"></p>
       ${isServiceEditor() ? '' : '<button type="button" class="secondary" data-page="review">打开生图回顾 →</button>'}
-    </section>
-    <div class="actions"><button type="button" class="secondary" data-action="reset-image-workflow">恢复默认生图设置</button><p class="muted" role="status" data-feedback>更改会自动保存。</p></div>`;
+    </section>`;
 }
 export function workflowStatus(settings) {
     if (settings.autoProcessReplies && settings.autoGenerateImages)

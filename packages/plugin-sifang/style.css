@@ -1965,7 +1965,7 @@ input[type="checkbox"] { flex: 0 0 auto; width: 18px; height: 18px; accent-color
 }
 
 
-.service-inline { display: grid; gap: 15px; margin-block: 18px; min-width: 0; }
+.service-inline { display: grid; gap: 15px; min-width: 0; }
 .service-inline .service-sync { margin: 0; }
 .service-inline .service-sync:empty { display: none; }
 .service-inline :is(.service-editor-panel, [data-model-settings] > .model-settings > .config-section, #service-worldbooks) {
@@ -1974,7 +1974,6 @@ input[type="checkbox"] { flex: 0 0 auto; width: 18px; height: 18px; accent-color
 }
 .service-inline :is([data-model-settings], [data-model-settings] > .model-settings:not(.worldbook-library)) { display: grid; gap: 15px; }
 .service-inline [data-model-settings] .section-index, .service-inline [data-config-transfer] .section-index { display: none; }
-.service-inline .service-editor-panel > h3 { font-size: 17px; margin: 0 0 14px; }
 .service-inline [data-model-settings] > .model-settings > .config-section > .section-heading { grid-template-columns: minmax(0, 1fr); }
 .service-inline [data-model-settings] > .model-settings .section-heading > * { grid-column: auto; }
 .service-inline :is(.service-editor-panel, h2, #service-worldbooks) { scroll-margin-top: 18px; }
@@ -1985,6 +1984,7 @@ input[type="checkbox"] { flex: 0 0 auto; width: 18px; height: 18px; accent-color
 .service-inline #service-outfits .anchor-settings { margin: 0; }
 
 
+/* One panel set serves every dashboard page; the host's data-page picks what shows. */
 :host(:not([data-page="image"])) .service-inline [data-editor-page="image"],
 :host(:not([data-page="artists"])) .service-inline [data-editor-page="artists"],
 :host(:not([data-page="model"])) .service-inline [data-editor-page="model"],
@@ -1992,8 +1992,10 @@ input[type="checkbox"] { flex: 0 0 auto; width: 18px; height: 18px; accent-color
 :host(:not([data-page="worldbooks"])) .service-inline [data-editor-page="worldbooks"],
 :host(:not([data-page="anchors"])) .service-inline [data-editor-page="anchors"],
 :host(:not([data-page="outfits"])) .service-inline [data-editor-page="outfits"],
-:host(:not([data-page="workflow"])) .service-inline [data-editor-page="workflow"],
-:host(:not([data-page="preferences"])) .service-inline [data-editor-page="preferences"],
+:host(:not([data-page="sifang-workflow"])) .service-inline [data-editor-page="sifang-workflow"],
+:host(:not([data-page="sifang-appearance"])) .service-inline [data-editor-page="sifang-appearance"],
+:host(:not([data-page="transfer"])) .service-inline [data-editor-page="transfer"],
+:host(:not([data-page="history"])) .service-inline [data-editor-page="history"],
 :host(:not([data-page="image"], [data-page="artists"])) .service-inline #service-image,
 :host(:not([data-page="model"], [data-page="prompts"], [data-page="worldbooks"])) .service-inline [data-model-settings],
 :host([data-page="worldbooks"]) .service-inline [data-model-settings] > .model-settings:not(.worldbook-library) {

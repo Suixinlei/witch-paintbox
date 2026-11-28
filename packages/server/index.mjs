@@ -113,14 +113,17 @@ async function route(req, res, signal, isRisu) {
     const current = config.snapshot();
     const image = current?.image.profiles.novelai;
     const model = current ? modelSettingsForProvider(current.model, 'novelai') : null;
+    const { autoProcessReplies, autoGenerateImages, imageRetentionDays } = current?.preferences ?? defaultSettings();
     return sendJson(res, {
       address: `http://${host}:${server.address().port}`, directory, revision: config.revision(),
       queue: jobs.queueState(), history: library.count(),
       image: image ? { provider: 'NAI', configured: Boolean(image.connection.key),
-        model: image.parameters.model } : null,
+        model: image.parameters.model, artists: image.artists.length } : null,
       model: model ? { name: model.mode === 'custom' ? model.model : env.PAINTBOX_MODEL_NAME || '',
         transport: model.transport, configured: model.mode === 'custom' ? Boolean(model.url) : Boolean(env.PAINTBOX_MODEL_URL),
         preset: model.presetName } : null,
+      // What the dashboard shows per scope: 四方 automation and how long the shared history is kept.
+      preferences: current ? { autoProcessReplies, autoGenerateImages, imageRetentionDays } : null,
       libraries: current ? { anchors: current.anchors.length, worldbooks: current.worldbooks.length,
         outfits: current.sharedOutfits.length, vibes: current.vibes.items.length } : null,
     });
